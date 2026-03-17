@@ -1,0 +1,43 @@
+name: Feature Request
+description: Suggest an idea or a new feature for the Lumaely backend or infrastructure
+title: "‎ "
+type: "Feature"
+body:
+  - type: textarea
+    id: user_story
+    attributes:
+      label: User story
+      description: Describe the feature using a user story.
+      placeholder: |
+        As a [client app / developer],
+        I want to [action, ex: upload media files to MinIO via a presigned URL],
+        So that [goal, ex: the Go API isn't bottlenecked by heavy file transfers].
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed solution
+      description: How do you see this feature working technically?
+      placeholder: "ex: Create a new GET /api/v1/media/upload-url endpoint that generates an S3 presigned URL using the MinIO Go SDK."
+    validations:
+      required: true
+
+  - type: textarea
+    id: draft
+    attributes:
+      label: Drafts
+      description: Add any JSON payloads, database schema changes, or architecture diagrams here.
+      placeholder: |
+        Request: GET /api/v1/media/upload-url
+        Response: { "url": "https://..." }
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission checklist
+      description: Please verify the following before submitting.
+      options:
+        - label: I have checked that this feature hasn't been requested already.
+          required: true
