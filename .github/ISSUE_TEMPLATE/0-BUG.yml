@@ -1,0 +1,65 @@
+name: Bug Report
+description: Report a bug in the Lumaely backend or infrastructure
+title: "‎ "
+type: "Bug"
+body:
+  - type: textarea
+    id: bug_description
+    attributes:
+      label: Bug description
+      description: A clear and concise description of the issue.
+      placeholder: "ex: The /api endpoint returns a 500 Internal Server Error when sending a payload larger than 5MB."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we trigger this bug?
+      placeholder: |
+        1. Send a POST request to '/api' with the following JSON: ...
+        2. Check the server logs
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+
+  - type: input
+    id: backend_version
+    attributes:
+      label: Go / Docker / Commit version
+      description: Which version of tools or commit hash are you testing?
+      placeholder: "ex: Go 1.22, Docker 29.3.0, commit a1b2c3d"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs_stacktrace
+    attributes:
+      label: Server logs and/or stacktrace
+      description: Paste your Go panic logs, Docker logs, or database errors here.
+      placeholder: "Paste your `docker logs <image>` output here."
+
+  - type: textarea
+    id: logs_screenshots
+    attributes:
+      label: Screenshots and/or logs
+      description: Drag and drop screenshots, screen recordings, or paste your Flutter console stacktrace here.
+      placeholder: "Paste your flutter run logs or drop your images here."
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission checklist
+      description: Please verify the following before submitting.
+      options:
+        - label: I have checked that this bug hasn't been reported already.
+          required: true
+        - label: I have selected the concerned labels (api, database, storage).
+          required: true
