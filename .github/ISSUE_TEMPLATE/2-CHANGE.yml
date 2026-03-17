@@ -1,0 +1,52 @@
+name: Feature Request
+description: Suggest an idea or a new feature for the Lumaely backend or infrastructure
+title: "‎ "
+type: "Feature"
+body:
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current behavior
+      description: How does the backend feature work right now, and why is it not optimal?
+      placeholder: "ex: Currently, the database uses a simple boolean for the sync status, which doesn't handle conflicts well between mobile and PC."
+    validations:
+      required: true
+
+  - type: textarea
+    id: user_story
+    attributes:
+      label: User story
+      description: Describe the feature using a user story.
+      placeholder: |
+        As a [developer / system],
+        I want to [action, ex: use a Last-Modified timestamp instead of a boolean],
+        So that [goal, ex: sync conflicts are resolved correctly].
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed solution
+      description: How do you see this feature working technically?
+      placeholder: "ex: Add an `updated_at` column in PostgreSQL and modify the Go sync handler to compare timestamps."
+    validations:
+      required: true
+
+  - type: textarea
+    id: draft
+    attributes:
+      label: Drafts
+      description: Add any JSON payloads, database schema changes, or architecture diagrams here.
+      placeholder: |
+        Request: GET /api/v1/media/upload-url
+        Response: { "url": "https://..." }
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission checklist
+      description: Please verify the following before submitting.
+      options:
+        - label: I have checked that this feature hasn't been requested already.
+          required: true
