@@ -1,7 +1,7 @@
-name: Feature Request
-description: Suggest an idea or a new feature for the Lumaely backend or infrastructure
+name: Change Request
+description: Suggest feature modification for the Lumaely backend or infrastructure
 title: "‎ "
-type: "Feature"
+type: "Change"
 body:
   - type: textarea
     id: current_behavior
