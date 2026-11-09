@@ -177,6 +177,12 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 func (h *Handler) DeleteUserProfile(c *gin.Context) {
 	userID := c.GetString("userID")
 
+	// Objects first: a storage failure keeps the account so the client can retry.
+	if err := h.Storage.DeletePrefix(c.Request.Context(), userID+"/"); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Storage delete error"})
+		return
+	}
+
 	query := `DELETE FROM users WHERE user_id = $1`
 	res, err := h.DB.ExecContext(c.Request.Context(), query, userID)
 	if err != nil {
