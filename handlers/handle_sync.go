@@ -6,8 +6,11 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"time"
 
@@ -15,250 +18,463 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	maxOperations         = 100
+	maxAttachmentsPerItem = 10
+	entryColumns          = `entry_id, mood_scale, metadata_blob, entry_timestamp, sha256_hash, version, seq, updated_at, deleted_at`
+
+	statusCreated       = "created"
+	statusUpdated       = "updated"
+	statusDeleted       = "deleted"
+	statusConflict      = "conflict"
+	statusNotFound      = "not_found"
+	statusInvalid       = "invalid"
+	statusQuotaExceeded = "quota_exceeded"
+	statusError         = "error"
+)
+
+func scanEntry(row interface{ Scan(...any) error }) (models.MoodEntry, error) {
+	var e models.MoodEntry
+	err := row.Scan(&e.EntryID, &e.MoodScale, &e.MetadataBlob, &e.EntryTimestamp, &e.SHA256Hash, &e.Version, &e.Seq, &e.UpdatedAt, &e.DeletedAt)
+	e.Attachments = []models.Attachment{}
+	return e, err
+}
+
+// attachEntries fills Attachments of entries in place.
+func attachEntries(ctx context.Context, q queryer, entries []models.MoodEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	ids := make([]string, len(entries))
+	index := make(map[string]int, len(entries))
+	for i, e := range entries {
+		ids[i] = e.EntryID
+		index[e.EntryID] = i
+	}
+	rows, err := q.QueryContext(ctx, `
+		SELECT entry_id, attachment_id, encrypted_aes_key, media_type, size_bytes, preview_object_key IS NOT NULL
+		FROM entry_attachments
+		WHERE entry_id = ANY($1::uuid[])
+		ORDER BY created_at ASC
+	`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var entryID string
+		var a models.Attachment
+		if err := rows.Scan(&entryID, &a.AttachmentID, &a.EncryptedAESKey, &a.MediaType, &a.SizeBytes, &a.HasPreview); err != nil {
+			return err
+		}
+		i := index[entryID]
+		entries[i].Attachments = append(entries[i].Attachments, a)
+	}
+	return rows.Err()
+}
+
+func loadEntry(ctx context.Context, q queryer, userID, entryID string) (models.MoodEntry, error) {
+	e, err := scanEntry(q.QueryRowContext(ctx, `SELECT `+entryColumns+` FROM mood_entries WHERE entry_id = $1 AND user_id = $2`, entryID, userID))
+	if err != nil {
+		return e, err
+	}
+	list := []models.MoodEntry{e}
+	err = attachEntries(ctx, q, list)
+	return list[0], err
+}
+
 func (h *Handler) FetchDelta(c *gin.Context) {
+	p, err := parsePage(c)
+	if err != nil {
+		badRequest(c, err)
+		return
+	}
+	ctx := c.Request.Context()
 	userID := c.GetString("userID")
-	sinceStr := c.Query("since")
-	if sinceStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Parameter 'since' is required"})
-		return
-	}
 
-	since, err := time.Parse(time.RFC3339, sinceStr)
+	rows, err := h.DB.QueryContext(ctx, `
+		SELECT `+entryColumns+` FROM mood_entries
+		WHERE user_id = $1 AND seq > $2
+		ORDER BY seq ASC
+		LIMIT $3
+	`, userID, p.cursor, p.limit+1)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid RFC3339 timestamp"})
-		return
-	}
-
-	query := `
-		SELECT entry_id, mood_scale, metadata_blob, entry_timestamp, sha256_hash, updated_at, deleted_at
-		FROM mood_entries
-		WHERE user_id = $1 AND (updated_at > $2 OR (deleted_at IS NOT NULL AND deleted_at > $2))
-		ORDER BY updated_at ASC
-	`
-	rows, err := h.DB.QueryContext(c.Request.Context(), query, userID, since)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database query failed"})
+		serverError(c, "Database query failed")
 		return
 	}
 	defer rows.Close()
 
 	entries := make([]models.MoodEntry, 0)
 	for rows.Next() {
-		var entry models.MoodEntry
-		err := rows.Scan(
-			&entry.EntryID,
-			&entry.MoodScale,
-			&entry.MetadataBlob,
-			&entry.EntryTimestamp,
-			&entry.SHA256Hash,
-			&entry.UpdatedAt,
-			&entry.DeletedAt,
-		)
+		e, err := scanEntry(rows)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse records"})
+			serverError(c, "Failed to parse records")
 			return
 		}
-		entries = append(entries, entry)
+		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse records"})
+		serverError(c, "Failed to parse records")
 		return
 	}
 
-	attachments, err := h.deltaAttachments(c.Request.Context(), userID, since)
+	page, err := pageMeta(ctx, h.DB, "mood_entries", userID, p, entries, func(e models.MoodEntry) int64 { return e.Seq })
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load attachments"})
+		serverError(c, "Database query failed")
 		return
 	}
-	for i := range entries {
-		entries[i].Attachments = attachments[entries[i].EntryID]
-		if entries[i].Attachments == nil {
-			entries[i].Attachments = []models.Attachment{}
-		}
+	if err := attachEntries(ctx, h.DB, page.Items); err != nil {
+		serverError(c, "Failed to load attachments")
+		return
 	}
-
-	c.JSON(http.StatusOK, entries)
-}
-
-func (h *Handler) deltaAttachments(ctx context.Context, userID string, since time.Time) (map[string][]models.Attachment, error) {
-	query := `
-		SELECT a.entry_id, a.attachment_id, a.encrypted_aes_key, a.media_type
-		FROM entry_attachments a
-		JOIN mood_entries e ON e.entry_id = a.entry_id
-		WHERE e.user_id = $1 AND (e.updated_at > $2 OR (e.deleted_at IS NOT NULL AND e.deleted_at > $2))
-		ORDER BY a.created_at ASC
-	`
-	rows, err := h.DB.QueryContext(ctx, query, userID, since)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	byEntry := map[string][]models.Attachment{}
-	for rows.Next() {
-		var entryID string
-		var a models.Attachment
-		if err := rows.Scan(&entryID, &a.AttachmentID, &a.EncryptedAESKey, &a.MediaType); err != nil {
-			return nil, err
-		}
-		byEntry[entryID] = append(byEntry[entryID], a)
-	}
-	return byEntry, rows.Err()
+	c.JSON(http.StatusOK, page)
 }
 
 func (h *Handler) PushChanges(c *gin.Context) {
-	userID := c.GetString("userID")
-
 	form, err := c.MultipartForm()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse multipart form"})
+		badRequest(c, errors.New("failed to parse multipart form"))
+		return
+	}
+	raw := form.Value["operations"]
+	if len(raw) != 1 {
+		badRequest(c, errors.New("one operations part is required"))
+		return
+	}
+	var ops []models.EntryOperation
+	if err := json.Unmarshal([]byte(raw[0]), &ops); err != nil {
+		badRequest(c, errors.New("operations must be a JSON array"))
+		return
+	}
+	if len(ops) == 0 || len(ops) > maxOperations {
+		badRequest(c, fmt.Errorf("operations must hold 1 to %d items", maxOperations))
 		return
 	}
 
-	entryID := c.PostForm("entry_id")
-	isDeleted := c.PostForm("is_deleted")
-	if entryID != "" {
-		if err := uuid.Validate(entryID); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "entry_id must be a UUID"})
-			return
-		}
+	results := make([]models.OperationResult, len(ops))
+	for i, op := range ops {
+		results[i] = h.applyOperation(c.Request.Context(), c.GetString("userID"), op, form.File)
+	}
+	c.JSON(http.StatusOK, gin.H{"results": results})
+}
+
+// opError carries the result status of a failed operation.
+type opError struct {
+	status string
+	msg    string
+	entry  *models.MoodEntry
+}
+
+func (e *opError) Error() string { return e.msg }
+
+func invalid(msg string) *opError { return &opError{status: statusInvalid, msg: msg} }
+
+type pendingFile struct {
+	header    *multipart.FileHeader
+	preview   *multipart.FileHeader
+	aesKey    []byte
+	mediaType string
+	size      int64
+}
+
+func (h *Handler) applyOperation(ctx context.Context, userID string, op models.EntryOperation, files map[string][]*multipart.FileHeader) models.OperationResult {
+	res := models.OperationResult{Ref: op.Ref}
+	var status string
+	var entry *models.MoodEntry
+	var err error
+
+	if op.Deleted {
+		status, err = h.deleteEntry(ctx, userID, op)
+	} else {
+		status, entry, err = h.upsertEntry(ctx, userID, op, files)
 	}
 
-	if isDeleted == "true" {
-		if entryID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "entry_id is required for deletion"})
-			return
-		}
-		h.tombstoneEntry(c, userID, entryID)
-		return
-	}
-
-	moodScale := []byte(c.PostForm("mood_scale"))
-	metadataBlob := []byte(c.PostForm("metadata_blob"))
-	sha256Hash := c.PostForm("sha256_hash")
-	entryTimeStr := c.PostForm("entry_timestamp")
-
-	entryTime, err := time.Parse(time.RFC3339, entryTimeStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid entry_timestamp format"})
-		return
-	}
-
-	files := form.File["file_content"]
-	aesKeys := form.Value["encrypted_aes_key"]
-	mediaTypes := form.Value["media_type"]
-	if len(aesKeys) < len(files) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Each file_content requires an encrypted_aes_key"})
-		return
-	}
-
-	var existingID string
-	checkQuery := `
-		SELECT entry_id FROM mood_entries 
-		WHERE user_id = $1 AND sha256_hash = $2 AND deleted_at IS NULL
-	`
-	err = h.DB.QueryRowContext(c.Request.Context(), checkQuery, userID, sha256Hash).Scan(&existingID)
+	var oe *opError
 	switch {
-	case err == nil && existingID != entryID:
-		c.JSON(http.StatusConflict, gin.H{"error": "Entry conflict or duplicate hash detected"})
-		return
-	case err != nil && !errors.Is(err, sql.ErrNoRows):
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Duplicate check failed"})
-		return
+	case errors.As(err, &oe):
+		res.Status, res.Error, res.Entry = oe.status, oe.msg, oe.entry
+	case err != nil:
+		log.Printf("sync operation %q for %s failed: %v", op.Ref, userID, err)
+		res.Status, res.Error = statusError, "internal error"
+	default:
+		res.Status, res.Entry = status, entry
+	}
+	return res
+}
+
+func validateOperation(op models.EntryOperation, files map[string][]*multipart.FileHeader) ([]pendingFile, time.Time, error) {
+	if op.EntryID != "" {
+		if err := uuid.Validate(op.EntryID); err != nil {
+			return nil, time.Time{}, invalid("entry_id must be a UUID")
+		}
+		if op.Version < 1 {
+			return nil, time.Time{}, invalid("version is required to update an entry")
+		}
+	}
+	ts, err := time.Parse(time.RFC3339, op.EntryTimestamp)
+	if err != nil {
+		return nil, ts, invalid("entry_timestamp must be RFC3339")
+	}
+	if op.SHA256Hash == "" {
+		return nil, ts, invalid("sha256_hash is required")
+	}
+	if len(op.Attachments) > maxAttachmentsPerItem {
+		return nil, ts, invalid(fmt.Sprintf("an entry holds at most %d files", maxAttachmentsPerItem))
 	}
 
-	tx, err := h.DB.BeginTx(c.Request.Context(), nil)
+	pending := make([]pendingFile, 0, len(op.Attachments))
+	for _, a := range op.Attachments {
+		fh := firstFile(files, a.File)
+		if fh == nil {
+			return nil, ts, invalid(fmt.Sprintf("file part %q is missing", a.File))
+		}
+		if len(a.EncryptedAESKey) == 0 {
+			return nil, ts, invalid("encrypted_aes_key is required for each file")
+		}
+		p := pendingFile{header: fh, aesKey: a.EncryptedAESKey, mediaType: a.MediaType, size: fh.Size}
+		if p.mediaType == "" {
+			p.mediaType = "application/octet-stream"
+		}
+		if a.Preview != "" {
+			if p.preview = firstFile(files, a.Preview); p.preview == nil {
+				return nil, ts, invalid(fmt.Sprintf("preview part %q is missing", a.Preview))
+			}
+			p.size += p.preview.Size
+		}
+		pending = append(pending, p)
+	}
+	return pending, ts, nil
+}
+
+func firstFile(files map[string][]*multipart.FileHeader, name string) *multipart.FileHeader {
+	if name == "" || len(files[name]) == 0 {
+		return nil
+	}
+	return files[name][0]
+}
+
+func (h *Handler) upsertEntry(ctx context.Context, userID string, op models.EntryOperation, files map[string][]*multipart.FileHeader) (string, *models.MoodEntry, error) {
+	pending, ts, err := validateOperation(op, files)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Transaction initiation failed"})
-		return
+		return "", nil, err
+	}
+
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return "", nil, err
 	}
 	defer tx.Rollback()
 
-	var uploadedKeys []string
+	var uploaded []string
 	committed := false
 	defer func() {
 		if !committed {
-			h.deleteObjects(uploadedKeys)
+			h.deleteObjects(uploaded)
 		}
 	}()
 
-	var targetEntryID string
-	if entryID != "" {
-		targetEntryID = entryID
-		updateQuery := `
-			UPDATE mood_entries
-			SET mood_scale = $1, metadata_blob = $2, entry_timestamp = $3, sha256_hash = $4, updated_at = NOW()
-			WHERE entry_id = $5 AND user_id = $6
-		`
-		res, err := tx.ExecContext(c.Request.Context(), updateQuery, moodScale, metadataBlob, entryTime, sha256Hash, targetEntryID, userID)
+	seq, err := nextSeq(ctx, tx, userID)
+	if err != nil {
+		return "", nil, err
+	}
+
+	var duplicateID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT entry_id FROM mood_entries
+		WHERE user_id = $1 AND sha256_hash = $2 AND deleted_at IS NULL AND entry_id::text <> $3
+	`, userID, op.SHA256Hash, op.EntryID).Scan(&duplicateID)
+	switch {
+	case err == nil:
+		current, err := loadEntry(ctx, tx, userID, duplicateID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update entry"})
-			return
+			return "", nil, err
 		}
-		// 0 rows: not the caller's entry.
-		if n, err := res.RowsAffected(); err != nil || n == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Entry not found"})
-			return
+		return "", nil, &opError{status: statusConflict, msg: "duplicate sha256_hash", entry: &current}
+	case !errors.Is(err, sql.ErrNoRows):
+		return "", nil, err
+	}
+
+	status := statusCreated
+	entryID := op.EntryID
+	existing := 0
+	if entryID == "" {
+		err = tx.QueryRowContext(ctx, `
+			INSERT INTO mood_entries (user_id, mood_scale, metadata_blob, entry_timestamp, sha256_hash, seq)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING entry_id
+		`, userID, nonNil(op.MoodScale), nonNil(op.MetadataBlob), ts, op.SHA256Hash, seq).Scan(&entryID)
+		if err != nil {
+			return "", nil, err
 		}
 	} else {
-		insertQuery := `
-			INSERT INTO mood_entries (user_id, mood_scale, metadata_blob, entry_timestamp, sha256_hash, updated_at)
-			VALUES ($1, $2, $3, $4, $5, NOW())
-			RETURNING entry_id
-		`
-		err = tx.QueryRowContext(c.Request.Context(), insertQuery, userID, moodScale, metadataBlob, entryTime, sha256Hash).Scan(&targetEntryID)
+		status = statusUpdated
+		if err := checkVersion(ctx, tx, userID, entryID, op.Version); err != nil {
+			return "", nil, err
+		}
+		_, err = tx.ExecContext(ctx, `
+			UPDATE mood_entries
+			SET mood_scale = $1, metadata_blob = $2, entry_timestamp = $3, sha256_hash = $4,
+				version = version + 1, seq = $5, updated_at = NOW()
+			WHERE entry_id = $6 AND user_id = $7
+		`, nonNil(op.MoodScale), nonNil(op.MetadataBlob), ts, op.SHA256Hash, seq, entryID, userID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create entry"})
-			return
+			return "", nil, err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM entry_attachments WHERE entry_id = $1`, entryID).Scan(&existing); err != nil {
+			return "", nil, err
 		}
 	}
 
-	if len(files) > 0 {
-		for i, fileHeader := range files {
-			aesKey := []byte(aesKeys[i])
-			mediaType := "application/octet-stream"
-			if i < len(mediaTypes) {
-				mediaType = mediaTypes[i]
-			}
+	if existing+len(pending) > maxAttachmentsPerItem {
+		return "", nil, invalid(fmt.Sprintf("an entry holds at most %d files", maxAttachmentsPerItem))
+	}
+	if err := h.checkQuota(ctx, tx, userID, pending); err != nil {
+		return "", nil, err
+	}
 
-			objectKey := newObjectKey(userID, targetEntryID)
-
-			src, err := fileHeader.Open()
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read attachment stream"})
-				return
-			}
-
-			err = h.Storage.Upload(c.Request.Context(), objectKey, src, fileHeader.Size, mediaType)
-			src.Close()
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Storage upload error"})
-				return
-			}
-			uploadedKeys = append(uploadedKeys, objectKey)
-
-			attQuery := `
-				INSERT INTO entry_attachments (entry_id, s3_object_key, encrypted_aes_key, media_type)
-				VALUES ($1, $2, $3, $4)
-			`
-			_, err = tx.ExecContext(c.Request.Context(), attQuery, targetEntryID, objectKey, aesKey, mediaType)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to catalog attachment"})
-				return
-			}
+	for _, p := range pending {
+		keys, err := h.storeFile(ctx, tx, userID, entryID, p)
+		uploaded = append(uploaded, keys...)
+		if err != nil {
+			return "", nil, err
 		}
 	}
 
+	entry, err := loadEntry(ctx, tx, userID, entryID)
+	if err != nil {
+		return "", nil, err
+	}
 	if err := tx.Commit(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Transaction commit failed"})
-		return
+		return "", nil, err
 	}
 	committed = true
+	return status, &entry, nil
+}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"status":   "synced",
-		"entry_id": targetEntryID,
-	})
+// checkVersion locks the entry row and rejects missing entries and stale versions (0 skips the check).
+func checkVersion(ctx context.Context, tx *sql.Tx, userID, entryID string, version int) error {
+	var current int
+	var deletedAt *time.Time
+	err := tx.QueryRowContext(ctx, `
+		SELECT version, deleted_at FROM mood_entries WHERE entry_id = $1 AND user_id = $2 FOR UPDATE
+	`, entryID, userID).Scan(&current, &deletedAt)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && deletedAt != nil) {
+		return &opError{status: statusNotFound, msg: "entry not found"}
+	}
+	if err != nil {
+		return err
+	}
+	if version != 0 && version != current {
+		entry, err := loadEntry(ctx, tx, userID, entryID)
+		if err != nil {
+			return err
+		}
+		return &opError{status: statusConflict, msg: "stale version", entry: &entry}
+	}
+	return nil
+}
+
+func (h *Handler) checkQuota(ctx context.Context, tx *sql.Tx, userID string, pending []pendingFile) error {
+	if h.Settings.StorageQuota <= 0 || len(pending) == 0 {
+		return nil
+	}
+	var incoming int64
+	for _, p := range pending {
+		incoming += p.size
+	}
+	used, err := storageUsed(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	if used+incoming > h.Settings.StorageQuota {
+		return &opError{status: statusQuotaExceeded, msg: "storage quota exceeded"}
+	}
+	return nil
+}
+
+// storeFile uploads a file and its preview, then records them; it returns the keys it uploaded.
+func (h *Handler) storeFile(ctx context.Context, tx *sql.Tx, userID, entryID string, p pendingFile) ([]string, error) {
+	var uploaded []string
+	key := newObjectKey(userID, entryID)
+	if err := h.upload(ctx, key, p.header, p.mediaType); err != nil {
+		return uploaded, err
+	}
+	uploaded = append(uploaded, key)
+
+	var previewKey *string
+	if p.preview != nil {
+		k := key + "-preview"
+		if err := h.upload(ctx, k, p.preview, p.mediaType); err != nil {
+			return uploaded, err
+		}
+		uploaded = append(uploaded, k)
+		previewKey = &k
+	}
+
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO entry_attachments (entry_id, s3_object_key, preview_object_key, encrypted_aes_key, media_type, size_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, entryID, key, previewKey, p.aesKey, p.mediaType, p.size)
+	return uploaded, err
+}
+
+func (h *Handler) upload(ctx context.Context, key string, fh *multipart.FileHeader, mediaType string) error {
+	src, err := fh.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	return h.Storage.Upload(ctx, key, src, fh.Size, mediaType)
+}
+
+// Objects deleted before commit: a storage failure rolls back so the client can retry.
+func (h *Handler) deleteEntry(ctx context.Context, userID string, op models.EntryOperation) (string, error) {
+	if err := uuid.Validate(op.EntryID); err != nil {
+		return "", invalid("entry_id must be a UUID")
+	}
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	seq, err := nextSeq(ctx, tx, userID)
+	if err != nil {
+		return "", err
+	}
+	if err := checkVersion(ctx, tx, userID, op.EntryID, op.Version); err != nil {
+		return "", err
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		UPDATE mood_entries
+		SET mood_scale = '', metadata_blob = '', sha256_hash = '', version = version + 1, seq = $1,
+			updated_at = NOW(), deleted_at = NOW()
+		WHERE entry_id = $2 AND user_id = $3
+	`, seq, op.EntryID, userID)
+	if err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM entry_attachments WHERE entry_id = $1`, op.EntryID); err != nil {
+		return "", err
+	}
+	if err := tombstoneWhere(ctx, tx, "bookmarks", userID, "entry_id", op.EntryID); err != nil {
+		return "", err
+	}
+	if err := h.Storage.DeletePrefix(ctx, userID+"/"+op.EntryID+"/"); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return statusDeleted, nil
+}
+
+func nonNil(b []byte) []byte {
+	if b == nil {
+		return []byte{}
+	}
+	return b
 }
 
 func newObjectKey(userID, entryID string) string {
@@ -276,44 +492,4 @@ func (h *Handler) deleteObjects(keys []string) {
 			log.Printf("orphan object %q not deleted: %v", key, err)
 		}
 	}
-}
-
-// Objects deleted before commit: a storage failure rolls back so the client can retry.
-func (h *Handler) tombstoneEntry(c *gin.Context, userID, entryID string) {
-	ctx := c.Request.Context()
-	tx, err := h.DB.BeginTx(ctx, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Transaction initiation failed"})
-		return
-	}
-	defer tx.Rollback()
-
-	res, err := tx.ExecContext(ctx, `
-		UPDATE mood_entries
-		SET deleted_at = NOW(), updated_at = NOW()
-		WHERE entry_id = $1 AND user_id = $2
-	`, entryID, userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record tombstone"})
-		return
-	}
-	if n, err := res.RowsAffected(); err != nil || n == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Entry not found"})
-		return
-	}
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM entry_attachments WHERE entry_id = $1`, entryID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove attachments"})
-		return
-	}
-	if err := h.Storage.DeletePrefix(ctx, userID+"/"+entryID+"/"); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Storage delete error"})
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Transaction commit failed"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }

@@ -8,22 +8,39 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct {
-	DB      *sql.DB
-	Payment services.PaymentService
-	Auth    *services.AuthService
-	Storage services.BlobStorage
+const (
+	ModeCloud      = "cloud"
+	ModeSelfHosted = "self-hosted"
+)
+
+// Settings are the server-wide values handlers depend on.
+type Settings struct {
+	Version      string
+	Mode         string
+	StorageQuota int64 // bytes; 0 = unlimited
+	ServerSecret []byte
 }
 
-func NewHandler(db *sql.DB, payment services.PaymentService, auth *services.AuthService, storage services.BlobStorage) *Handler {
+type Handler struct {
+	DB       *sql.DB
+	Payment  services.PaymentService
+	Auth     *services.AuthService
+	Storage  services.BlobStorage
+	Mailer   services.Mailer
+	Settings Settings
+}
+
+func NewHandler(db *sql.DB, payment services.PaymentService, auth *services.AuthService, storage services.BlobStorage, mailer services.Mailer, settings Settings) *Handler {
 	return &Handler{
-		DB:      db,
-		Payment: payment,
-		Auth:    auth,
-		Storage: storage,
+		DB:       db,
+		Payment:  payment,
+		Auth:     auth,
+		Storage:  storage,
+		Mailer:   mailer,
+		Settings: settings,
 	}
 }
 
 func (h *Handler) HealthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "version": h.Settings.Version, "mode": h.Settings.Mode})
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -85,9 +86,18 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", f.contentType[bucket+"/"+key])
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.Header().Set("ETag", `"etag"`)
 		w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+		// Only "bytes=N-" is needed: minio-go Seek then Read.
+		if start, ok := strings.CutPrefix(r.Header.Get("Range"), "bytes="); ok && r.Method == http.MethodGet {
+			from, _ := strconv.Atoi(strings.TrimSuffix(start, "-"))
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, len(body)-1, len(body)))
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)-from))
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write(body[from:])
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.Write(body)
 	case r.Method == http.MethodPut:
 		body, _ := io.ReadAll(r.Body)
@@ -222,15 +232,21 @@ func TestS3StorageUploadAndDelete(t *testing.T) {
 		t.Errorf("content type %q, want image/png", got)
 	}
 
-	body, size, err := s.Download(context.Background(), "u/e/obj")
+	obj, err := s.Download(context.Background(), "u/e/obj")
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	got, _ := io.ReadAll(body)
-	body.Close()
-	if string(got) != "payload" || size != 7 {
-		t.Errorf("Download = %q (%d bytes), want payload (7)", got, size)
+	got, _ := io.ReadAll(obj)
+	if string(got) != "payload" || obj.Size != 7 {
+		t.Errorf("Download = %q (%d bytes), want payload (7)", got, obj.Size)
 	}
+	if _, err := obj.Seek(3, io.SeekStart); err != nil {
+		t.Fatalf("Seek: %v", err)
+	}
+	if rest, _ := io.ReadAll(obj); string(rest) != "load" {
+		t.Errorf("after Seek(3) read %q, want load", rest)
+	}
+	obj.Close()
 
 	if err := s.Delete(context.Background(), "u/e/obj"); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -254,7 +270,7 @@ func TestS3StorageUploadPropagatesError(t *testing.T) {
 	if err := s.Delete(context.Background(), "k"); err == nil {
 		t.Fatal("expected error")
 	}
-	if _, _, err := s.Download(context.Background(), "k"); err == nil {
+	if _, err := s.Download(context.Background(), "k"); err == nil {
 		t.Fatal("expected error")
 	}
 	if err := s.DeletePrefix(context.Background(), "u/"); err == nil {
@@ -269,7 +285,7 @@ func TestS3StorageDownloadMissingObject(t *testing.T) {
 		t.Fatalf("NewS3Storage: %v", err)
 	}
 
-	if _, _, err := s.Download(context.Background(), "missing"); err == nil {
+	if _, err := s.Download(context.Background(), "missing"); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -325,14 +341,15 @@ func TestS3StorageIntegration(t *testing.T) {
 		t.Errorf("stat = size %d type %q", info.Size, info.ContentType)
 	}
 
-	body, size, err := s.Download(ctx, "user/entry/obj")
+	obj, err := s.Download(ctx, "user/entry/obj")
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	got, _ := io.ReadAll(body)
-	body.Close()
-	if string(got) != "hello" || size != 5 {
-		t.Errorf("Download = %q (%d)", got, size)
+	obj.Seek(1, io.SeekStart)
+	got, _ := io.ReadAll(obj)
+	obj.Close()
+	if string(got) != "ello" || obj.Size != 5 {
+		t.Errorf("Download from offset 1 = %q (size %d)", got, obj.Size)
 	}
 
 	if err := s.Delete(ctx, "user/entry/obj"); err != nil {

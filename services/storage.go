@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -12,7 +13,7 @@ import (
 // BlobStorage stores encrypted entry attachments.
 type BlobStorage interface {
 	Upload(ctx context.Context, objectKey string, reader io.Reader, size int64, contentType string) error
-	Download(ctx context.Context, objectKey string) (io.ReadCloser, int64, error)
+	Download(ctx context.Context, objectKey string) (*Object, error)
 	Delete(ctx context.Context, objectKey string) error
 	DeletePrefix(ctx context.Context, prefix string) error
 }
@@ -73,19 +74,25 @@ func (s *S3Storage) Upload(ctx context.Context, objectKey string, reader io.Read
 	return err
 }
 
-// Caller closes the returned stream.
-func (s *S3Storage) Download(ctx context.Context, objectKey string) (io.ReadCloser, int64, error) {
+// Object is a seekable download, so callers can serve HTTP Range requests; the caller closes it.
+type Object struct {
+	io.ReadSeekCloser
+	Size         int64
+	LastModified time.Time
+}
+
+func (s *S3Storage) Download(ctx context.Context, objectKey string) (*Object, error) {
 	obj, err := s.client.GetObject(ctx, s.bucket, objectKey, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	// GetObject is lazy; Stat surfaces missing objects before streaming starts.
 	info, err := obj.Stat()
 	if err != nil {
 		obj.Close()
-		return nil, 0, err
+		return nil, err
 	}
-	return obj, info.Size, nil
+	return &Object{ReadSeekCloser: obj, Size: info.Size, LastModified: info.LastModified}, nil
 }
 
 func (s *S3Storage) Delete(ctx context.Context, objectKey string) error {

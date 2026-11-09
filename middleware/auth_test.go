@@ -29,7 +29,7 @@ func newProtectedRouter(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
 
 	r := gin.New()
 	r.GET("/private", AuthRequired(db, services.NewAuthService()), func(c *gin.Context) {
-		c.String(http.StatusOK, c.GetString("userID"))
+		c.String(http.StatusOK, c.GetString("userID")+" "+c.GetString("sessionID"))
 	})
 	return r, mock
 }
@@ -85,10 +85,10 @@ func TestAuthRequiredValidSessionSetsUserID(t *testing.T) {
 	r, mock := newProtectedRouter(t)
 	mock.ExpectQuery("SELECT user_id").
 		WithArgs(services.NewAuthService().HashToken("tok")).
-		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow("user-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "session_id"}).AddRow("user-1", "session-1"))
 
 	w := doGet(r, "Bearer tok")
-	if w.Code != http.StatusOK || w.Body.String() != "user-1" {
-		t.Errorf("got %d %q, want 200 user-1", w.Code, w.Body.String())
+	if w.Code != http.StatusOK || w.Body.String() != "user-1 session-1" {
+		t.Errorf("got %d %q, want 200 \"user-1 session-1\"", w.Code, w.Body.String())
 	}
 }
