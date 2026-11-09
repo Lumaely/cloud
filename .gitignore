@@ -33,3 +33,6 @@ go.work.sum
 .vscode/
 # air build output
 tmp/
+
+# go build output
+/cloud
