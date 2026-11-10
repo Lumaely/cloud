@@ -249,6 +249,9 @@ func validateOperation(op models.EntryOperation, files map[string][]*multipart.F
 			if p.preview.Size > maxPreviewBytes {
 				return nil, ts, invalid(fmt.Sprintf("preview %q exceeds %d bytes", a.Preview, maxPreviewBytes))
 			}
+			if p.preview.Size > fh.Size {
+				return nil, ts, invalid(fmt.Sprintf("preview %q is larger than its file", a.Preview))
+			}
 		}
 		pending = append(pending, p)
 	}
@@ -383,7 +386,7 @@ func checkVersion(ctx context.Context, tx *sql.Tx, userID, entryID string, versi
 	return nil
 }
 
-// checkQuota counts files only; previews are capped at maxPreviewBytes instead.
+// checkQuota counts files only: a preview is never larger than its file, so storage stays under 2x the quota.
 func (h *Handler) checkQuota(ctx context.Context, tx *sql.Tx, userID string, pending []pendingFile) error {
 	if h.Settings.StorageQuota <= 0 || len(pending) == 0 {
 		return nil

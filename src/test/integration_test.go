@@ -418,18 +418,18 @@ func TestIntegrationEntrySyncLifecycle(t *testing.T) {
 	a := s.register("sync@test.local")
 
 	res := s.push(a.token, []map[string]any{
-		newEntry("one", "h1", file{name: "f1", mediaType: "image/png", content: "pic", preview: "thumb"}),
+		newEntry("one", "h1", file{name: "f1", mediaType: "image/png", content: "pic", preview: "th"}),
 		newEntry("two", "h2"),
 		newEntry("bad", ""),
 		{"ref": "ghost", "entry_id": "33333333-3333-3333-3333-333333333333", "version": 1,
 			"entry_timestamp": "2026-11-09T10:00:00Z", "sha256_hash": "h9"},
-	}, file{name: "f1", mediaType: "image/png", content: "pic", preview: "thumb"})
+	}, file{name: "f1", mediaType: "image/png", content: "pic", preview: "th"})
 	statuses := fmt.Sprint(res[0].Status, res[1].Status, res[2].Status, res[3].Status)
 	if statuses != "createdcreatedinvalidnot_found" {
 		t.Fatalf("statuses = %s (%+v)", statuses, res)
 	}
 	one := *res[0].Entry
-	if len(one.Attachments) != 1 || !one.Attachments[0].HasPreview || one.Attachments[0].SizeBytes != 3 || one.Attachments[0].PreviewSizeBytes != 5 || one.Version != 1 {
+	if len(one.Attachments) != 1 || !one.Attachments[0].HasPreview || one.Attachments[0].SizeBytes != 3 || one.Attachments[0].PreviewSizeBytes != 2 || one.Version != 1 {
 		t.Errorf("entry one = %+v", one)
 	}
 

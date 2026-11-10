@@ -214,27 +214,32 @@ func TestIntegrationSignOutOneDevice(t *testing.T) {
 }
 
 func TestIntegrationPreviewsOutsideQuota(t *testing.T) {
-	s := newStack(t, 10)
+	const capBytes = 256 << 10
+	s := newStack(t, capBytes+5)
 	a := s.register("prev@test.local")
 
-	pic := file{name: "pic", mediaType: "image/png", content: "12345", preview: strings.Repeat("p", 20)}
+	pic := file{name: "pic", mediaType: "image/png", content: "12345", preview: "pppp"}
 	entry := s.createEntry(a.token, "p1", pic)
-	if att := entry.Attachments[0]; att.SizeBytes != 5 || att.PreviewSizeBytes != 20 {
+	if att := entry.Attachments[0]; att.SizeBytes != 5 || att.PreviewSizeBytes != 4 {
 		t.Errorf("attachment = %+v", att)
 	}
-	usage := decode[models.StorageUsage](t, s.do(http.MethodGet, "/users/me/storage", a.token, nil))
-	if usage.UsedBytes != 5 {
-		t.Errorf("used = %d, want 5", usage.UsedBytes)
+	larger := file{name: "larger", mediaType: "image/png", content: "1", preview: "22"}
+	if res := s.push(a.token, []map[string]any{newEntry("l", "p4", larger)}, larger); res[0].Status != "invalid" {
+		t.Errorf("preview larger than its file = %+v", res[0])
 	}
 
-	max := file{name: "max", mediaType: "image/png", content: "1", preview: strings.Repeat("p", 256<<10)}
+	max := file{name: "max", mediaType: "image/png", content: strings.Repeat("f", capBytes), preview: strings.Repeat("p", capBytes)}
 	if res := s.push(a.token, []map[string]any{newEntry("m", "p2", max)}, max); res[0].Status != "created" {
 		t.Errorf("256 KiB preview = %+v", res[0])
 	}
-	over := file{name: "over", mediaType: "image/png", content: "1", preview: strings.Repeat("p", 256<<10+1)}
-	res := s.push(a.token, []map[string]any{newEntry("o", "p3", over)}, over)
-	if res[0].Status != "invalid" {
-		t.Errorf("oversized preview = %+v", res[0])
+	usage := decode[models.StorageUsage](t, s.do(http.MethodGet, "/users/me/storage", a.token, nil))
+	if usage.UsedBytes != capBytes+5 {
+		t.Errorf("used = %d, want %d", usage.UsedBytes, capBytes+5)
+	}
+
+	over := file{name: "over", mediaType: "image/png", content: strings.Repeat("f", capBytes+1), preview: strings.Repeat("p", capBytes+1)}
+	if res := s.push(a.token, []map[string]any{newEntry("o", "p3", over)}, over); res[0].Status != "invalid" {
+		t.Errorf("preview over 256 KiB = %+v", res[0])
 	}
 	if keys := s.objectKeys(a.userID + "/"); len(keys) != 4 {
 		t.Errorf("objects = %v, want 4", keys)
