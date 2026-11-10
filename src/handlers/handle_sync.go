@@ -21,6 +21,7 @@ import (
 const (
 	maxOperations         = 100
 	maxAttachmentsPerItem = 10
+	maxPreviewBytes       = 512 * 1024
 	entryColumns          = `entry_id, mood_scale, metadata_blob, entry_timestamp, sha256_hash, version, seq, updated_at, deleted_at`
 
 	statusCreated       = "created"
@@ -52,7 +53,7 @@ func attachEntries(ctx context.Context, q queryer, entries []models.MoodEntry) e
 		index[e.EntryID] = i
 	}
 	rows, err := q.QueryContext(ctx, `
-		SELECT entry_id, attachment_id, encrypted_aes_key, media_type, size_bytes, preview_object_key IS NOT NULL
+		SELECT entry_id, attachment_id, encrypted_aes_key, media_type, size_bytes, preview_size_bytes, preview_object_key IS NOT NULL
 		FROM entry_attachments
 		WHERE entry_id = ANY($1::uuid[])
 		ORDER BY created_at ASC
@@ -64,7 +65,7 @@ func attachEntries(ctx context.Context, q queryer, entries []models.MoodEntry) e
 	for rows.Next() {
 		var entryID string
 		var a models.Attachment
-		if err := rows.Scan(&entryID, &a.AttachmentID, &a.EncryptedAESKey, &a.MediaType, &a.SizeBytes, &a.HasPreview); err != nil {
+		if err := rows.Scan(&entryID, &a.AttachmentID, &a.EncryptedAESKey, &a.MediaType, &a.SizeBytes, &a.PreviewSizeBytes, &a.HasPreview); err != nil {
 			return err
 		}
 		i := index[entryID]
@@ -174,7 +175,13 @@ type pendingFile struct {
 	preview   *multipart.FileHeader
 	aesKey    []byte
 	mediaType string
-	size      int64
+}
+
+func (p pendingFile) previewSize() int64 {
+	if p.preview == nil {
+		return 0
+	}
+	return p.preview.Size
 }
 
 func (h *Handler) applyOperation(ctx context.Context, userID string, op models.EntryOperation, files map[string][]*multipart.FileHeader) models.OperationResult {
@@ -231,7 +238,7 @@ func validateOperation(op models.EntryOperation, files map[string][]*multipart.F
 		if len(a.EncryptedAESKey) == 0 {
 			return nil, ts, invalid("encrypted_aes_key is required for each file")
 		}
-		p := pendingFile{header: fh, aesKey: a.EncryptedAESKey, mediaType: a.MediaType, size: fh.Size}
+		p := pendingFile{header: fh, aesKey: a.EncryptedAESKey, mediaType: a.MediaType}
 		if p.mediaType == "" {
 			p.mediaType = "application/octet-stream"
 		}
@@ -239,7 +246,9 @@ func validateOperation(op models.EntryOperation, files map[string][]*multipart.F
 			if p.preview = firstFile(files, a.Preview); p.preview == nil {
 				return nil, ts, invalid(fmt.Sprintf("preview part %q is missing", a.Preview))
 			}
-			p.size += p.preview.Size
+			if p.preview.Size > maxPreviewBytes {
+				return nil, ts, invalid(fmt.Sprintf("preview %q exceeds %d bytes", a.Preview, maxPreviewBytes))
+			}
 		}
 		pending = append(pending, p)
 	}
@@ -374,13 +383,14 @@ func checkVersion(ctx context.Context, tx *sql.Tx, userID, entryID string, versi
 	return nil
 }
 
+// checkQuota counts files only; previews are capped at maxPreviewBytes instead.
 func (h *Handler) checkQuota(ctx context.Context, tx *sql.Tx, userID string, pending []pendingFile) error {
 	if h.Settings.StorageQuota <= 0 || len(pending) == 0 {
 		return nil
 	}
 	var incoming int64
 	for _, p := range pending {
-		incoming += p.size
+		incoming += p.header.Size
 	}
 	used, err := storageUsed(ctx, tx, userID)
 	if err != nil {
@@ -412,9 +422,9 @@ func (h *Handler) storeFile(ctx context.Context, tx *sql.Tx, userID, entryID str
 	}
 
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO entry_attachments (entry_id, s3_object_key, preview_object_key, encrypted_aes_key, media_type, size_bytes)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, entryID, key, previewKey, p.aesKey, p.mediaType, p.size)
+		INSERT INTO entry_attachments (entry_id, s3_object_key, preview_object_key, encrypted_aes_key, media_type, size_bytes, preview_size_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, entryID, key, previewKey, p.aesKey, p.mediaType, p.header.Size, p.previewSize())
 	return uploaded, err
 }
 

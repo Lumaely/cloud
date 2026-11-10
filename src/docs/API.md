@@ -28,6 +28,7 @@ flowchart LR
 | `wrapped_key_password`, `wrapped_key_recovery`, `encrypted_recovery_key` | no |
 | entries, patterns, activities, places, folders, bookmark blobs, files | no |
 | `entry_timestamp`, `sha256_hash`, `media_type`, file sizes, ids | yes |
+| session `device_name`, `platform`, `created_at`, `last_seen_at` | yes |
 
 `kdf_params` is opaque to the server (suggested: `{"alg":"argon2id","m":65536,"t":3,"p":1}`). Wrapped keys are opaque blobs (suggested: XChaCha20-Poly1305, nonce prefixed).
 
@@ -49,19 +50,42 @@ Returned by register, login, recovery and `GET /users/me/keys`.
 | Route | Body | Result |
 |---|---|---|
 | `POST /users/login/params` | `{email}` | `{kdf_salt, kdf_params}`. Unknown emails get a stable fake salt. |
-| `POST /users/register` | `{email, auth_key, recovery_auth_key, kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery, encrypted_recovery_key}` | 201 `{token, user, keys}`, 409 email taken |
-| `POST /users/login` | `{email, auth_key}` | 200 `{token, user, keys}`, 401 |
+| `POST /users/register` | `{email, auth_key, recovery_auth_key, kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery, encrypted_recovery_key, device?}` | 201 `{token, user, keys}`, 409 email taken |
+| `POST /users/login` | `{email, auth_key, device?}` | 200 `{token, user, keys}`, 401 |
 | `POST /users/recover/start` | `{email, recovery_auth_key}` | 200 `{recovery_token, wrapped_key_recovery}` (valid 15 min), 401 |
-| `POST /users/recover/finish` | `{recovery_token, auth_key, kdf_salt, kdf_params, wrapped_key_password}` | 200 `{token, user, keys}`. Signs out every other device. |
+| `POST /users/recover/finish` | `{recovery_token, auth_key, kdf_salt, kdf_params, wrapped_key_password, device?}` | 200 `{token, user, keys}`. Signs out every other device. |
 | `GET /users/me` | | `{user_id, email, created_at, diary_epoch}` |
 | `GET /users/me/keys` | | key bundle |
 | `PUT /users/me/password` | `{current_auth_key, auth_key, kdf_salt, kdf_params, wrapped_key_password, recovery?, sign_out_other_devices}` | 204, 401 wrong current key. `recovery` = `{recovery_auth_key, wrapped_key_recovery, encrypted_recovery_key}` replaces the recovery key. |
+| `GET /users/me/sessions` | | 200 list of the account's live sessions, see [Devices](#devices). |
 | `DELETE /users/me/sessions` | | 204. Signs out every device, this one included. |
+| `DELETE /users/me/sessions/{session_id}` | | 204. Signs out that device, this one allowed. 404 unknown or another account's session, 400 malformed id. |
 | `DELETE /users/me/diary` | | 204. Erases entries, patterns, activities, places, folders, bookmarks and files. Keeps the account. Increments `diary_epoch`. |
 | `DELETE /users/me` | | 204. Deletes the account and its files. |
-| `GET /users/me/storage` | | `{used_bytes, quota_bytes}`. `quota_bytes` is 0 when unlimited. |
+| `GET /users/me/storage` | | `{used_bytes, quota_bytes}`. `used_bytes` counts files, not previews. `quota_bytes` is 0 when unlimited. |
 | `POST /users/erase/request` | `{email}` | 202 always. Emails a 6-digit code valid 15 min when the account exists. |
-| `POST /users/erase/confirm` | `{email, code}` + register key fields | 200 `{token, user, keys}`. Erases the diary, replaces the keys, signs out every device. 401 wrong or expired code; 5 wrong codes burn it. |
+| `POST /users/erase/confirm` | `{email, code, device?}` + register key fields | 200 `{token, user, keys}`. Erases the diary, replaces the keys, signs out every device. 401 wrong or expired code; 5 wrong codes burn it. |
+
+### Devices
+
+Register, login, recovery finish and erase confirm each open one session. `device` names it; both fields are optional, at most 64 characters each, else 400.
+
+```json
+{"email": "…", "auth_key": "base64", "device": {"name": "Alice's iPhone", "platform": "ios"}}
+```
+
+`GET /users/me/sessions` lists non-expired sessions, most recently seen first. `current` marks the caller's session. Missing device fields are `null`.
+
+```json
+[
+  {"session_id": "uuid", "device_name": "Alice's iPhone", "platform": "ios",
+   "created_at": "2026-11-10T09:00:00Z", "last_seen_at": "2026-11-10T18:42:00Z", "current": true},
+  {"session_id": "uuid", "device_name": null, "platform": null,
+   "created_at": "2026-10-01T12:00:00Z", "last_seen_at": "2026-10-30T08:15:00Z", "current": false}
+]
+```
+
+`last_seen_at` is refreshed by any authenticated request, at most once every 5 minutes per session.
 
 Rate limits (per route and client IP, see `TRUSTED_PROXIES`): register, login, login params, recovery and erase routes allow 10 requests per minute, then 429.
 
@@ -113,7 +137,7 @@ Item: `{id, blob, version, seq, updated_at, deleted_at?}` (+ refs).
 
 ### `GET /sync`
 
-List response of entries. Entry: `{entry_id, mood_scale, metadata_blob, entry_timestamp, sha256_hash, version, seq, updated_at, deleted_at?, attachments: [{attachment_id, encrypted_aes_key, media_type, size_bytes, has_preview}]}`.
+List response of entries. Entry: `{entry_id, mood_scale, metadata_blob, entry_timestamp, sha256_hash, version, seq, updated_at, deleted_at?, attachments: [{attachment_id, encrypted_aes_key, media_type, size_bytes, preview_size_bytes, has_preview}]}`. `size_bytes` is the file; `preview_size_bytes` is the preview, 0 when none.
 
 ### `POST /sync`
 
@@ -143,7 +167,7 @@ Omit `entry_id` to create; set it with `version` to update or delete. Each opera
 ]}
 ```
 
-Statuses: `created`, `updated`, `deleted`, `conflict` (stale `version` or duplicate `sha256_hash`; `entry` is the server copy), `not_found`, `invalid`, `quota_exceeded`, `error`.
+Statuses: `created`, `updated`, `deleted`, `conflict` (stale `version` or duplicate `sha256_hash`; `entry` is the server copy), `not_found`, `invalid` (includes a preview over 512 KiB), `quota_exceeded`, `error`.
 
 ## Files
 
@@ -153,7 +177,7 @@ Statuses: `created`, `updated`, `deleted`, `conflict` (stale `version` or duplic
 | `GET /attachments/{id}/preview` | Preview bytes, 404 when none. |
 | `DELETE /attachments/{id}` | 204. Bumps the entry `version` and `seq`. |
 
-Uploads count against the account quota (`STORAGE_QUOTA_BYTES`, 5 GiB on Lumaely Cloud, 0 on self-hosted).
+Files count against the account quota (`STORAGE_QUOTA_BYTES`, 5 GiB on Lumaely Cloud, 0 on self-hosted). Previews do not; each is capped at 512 KiB.
 
 ## Other
 

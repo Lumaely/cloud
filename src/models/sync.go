@@ -17,11 +17,12 @@ type MoodEntry struct {
 
 // Attachment file is served by GET /attachments/:attachment_id.
 type Attachment struct {
-	AttachmentID    string `json:"attachment_id"`
-	EncryptedAESKey []byte `json:"encrypted_aes_key"`
-	MediaType       string `json:"media_type"`
-	SizeBytes       int64  `json:"size_bytes"`
-	HasPreview      bool   `json:"has_preview"`
+	AttachmentID     string `json:"attachment_id"`
+	EncryptedAESKey  []byte `json:"encrypted_aes_key"`
+	MediaType        string `json:"media_type"`
+	SizeBytes        int64  `json:"size_bytes"`
+	PreviewSizeBytes int64  `json:"preview_size_bytes"`
+	HasPreview       bool   `json:"has_preview"`
 }
 
 type Page[T any] struct {

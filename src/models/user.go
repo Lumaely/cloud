@@ -33,9 +33,25 @@ type KeyBundle struct {
 	EncryptedRecoveryKey []byte          `json:"encrypted_recovery_key"`
 }
 
+// Device names the session a sign-in opens, for GET /users/me/sessions.
+type Device struct {
+	Name     string `json:"name" binding:"max=64"`
+	Platform string `json:"platform" binding:"max=64"`
+}
+
+type Session struct {
+	SessionID  string    `json:"session_id"`
+	DeviceName *string   `json:"device_name"`
+	Platform   *string   `json:"platform"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+	Current    bool      `json:"current"`
+}
+
 type RegisterRequest struct {
-	Email   string `json:"email" binding:"required,email"`
-	AuthKey []byte `json:"auth_key" binding:"required"`
+	Email   string  `json:"email" binding:"required,email"`
+	AuthKey []byte  `json:"auth_key" binding:"required"`
+	Device  *Device `json:"device"`
 	KeyMaterial
 	RecoveryMaterial
 }
@@ -50,8 +66,9 @@ type LoginParamsResponse struct {
 }
 
 type LoginRequest struct {
-	Email   string `json:"email" binding:"required,email"`
-	AuthKey []byte `json:"auth_key" binding:"required"`
+	Email   string  `json:"email" binding:"required,email"`
+	AuthKey []byte  `json:"auth_key" binding:"required"`
+	Device  *Device `json:"device"`
 }
 
 type AuthResponse struct {
@@ -71,8 +88,9 @@ type RecoverStartResponse struct {
 }
 
 type RecoverFinishRequest struct {
-	RecoveryToken string `json:"recovery_token" binding:"required"`
-	AuthKey       []byte `json:"auth_key" binding:"required"`
+	RecoveryToken string  `json:"recovery_token" binding:"required"`
+	AuthKey       []byte  `json:"auth_key" binding:"required"`
+	Device        *Device `json:"device"`
 	KeyMaterial
 }
 
@@ -89,9 +107,10 @@ type EraseRequest struct {
 }
 
 type EraseConfirmRequest struct {
-	Email   string `json:"email" binding:"required,email"`
-	Code    string `json:"code" binding:"required"`
-	AuthKey []byte `json:"auth_key" binding:"required"`
+	Email   string  `json:"email" binding:"required,email"`
+	Code    string  `json:"code" binding:"required"`
+	AuthKey []byte  `json:"auth_key" binding:"required"`
+	Device  *Device `json:"device"`
 	KeyMaterial
 	RecoveryMaterial
 }

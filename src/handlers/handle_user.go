@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -59,15 +60,18 @@ func (h *Handler) hashKey(key []byte) (string, error) {
 	return h.Auth.HashPassword(encodeKey(key))
 }
 
-func (h *Handler) createSession(ctx context.Context, q queryer, userID string) (string, error) {
+func (h *Handler) createSession(ctx context.Context, q queryer, userID string, device *models.Device) (string, error) {
 	rawToken, tokenHash, err := h.Auth.GenerateSessionToken()
 	if err != nil {
 		return "", err
 	}
+	if device == nil {
+		device = &models.Device{}
+	}
 	_, err = q.ExecContext(ctx, `
-		INSERT INTO user_sessions (user_id, token_hash, expires_at)
-		VALUES ($1, $2, $3)
-	`, userID, tokenHash, time.Now().Add(sessionTTL))
+		INSERT INTO user_sessions (user_id, token_hash, expires_at, device_name, platform)
+		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''))
+	`, userID, tokenHash, time.Now().Add(sessionTTL), device.Name, device.Platform)
 	if err != nil {
 		return "", err
 	}
@@ -87,9 +91,9 @@ func loadAccount(ctx context.Context, q queryer, userID string) (models.User, mo
 }
 
 // respondWithSession opens a session inside tx, commits, and returns token, user and keys.
-func (h *Handler) respondWithSession(c *gin.Context, tx *sql.Tx, userID string, status int) {
+func (h *Handler) respondWithSession(c *gin.Context, tx *sql.Tx, userID string, device *models.Device, status int) {
 	ctx := c.Request.Context()
-	token, err := h.createSession(ctx, tx, userID)
+	token, err := h.createSession(ctx, tx, userID, device)
 	if err != nil {
 		serverError(c, "Failed to create session")
 		return
@@ -159,7 +163,7 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		serverError(c, "Database error")
 		return
 	}
-	h.respondWithSession(c, tx, userID, http.StatusCreated)
+	h.respondWithSession(c, tx, userID, req.Device, http.StatusCreated)
 }
 
 // LoginParams answers unknown emails with a stable fake salt so it can't reveal which accounts exist.
@@ -222,7 +226,7 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 	defer tx.Rollback()
-	h.respondWithSession(c, tx, userID, http.StatusOK)
+	h.respondWithSession(c, tx, userID, req.Device, http.StatusOK)
 }
 
 func (h *Handler) RecoverStart(c *gin.Context) {
@@ -310,7 +314,7 @@ func (h *Handler) RecoverFinish(c *gin.Context) {
 		serverError(c, "Database error")
 		return
 	}
-	h.respondWithSession(c, tx, userID, http.StatusOK)
+	h.respondWithSession(c, tx, userID, req.Device, http.StatusOK)
 }
 
 func setPasswordKeys(ctx context.Context, q queryer, userID, authHash string, k models.KeyMaterial) error {
@@ -421,6 +425,54 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 func (h *Handler) SignOutAllDevices(c *gin.Context) {
 	if _, err := h.DB.ExecContext(c.Request.Context(), `DELETE FROM user_sessions WHERE user_id = $1`, c.GetString("userID")); err != nil {
 		serverError(c, "Database error")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ListSessions(c *gin.Context) {
+	rows, err := h.DB.QueryContext(c.Request.Context(), `
+		SELECT session_id, device_name, platform, created_at, last_seen_at, session_id = $2
+		FROM user_sessions
+		WHERE user_id = $1 AND expires_at > NOW()
+		ORDER BY last_seen_at DESC, created_at DESC
+	`, c.GetString("userID"), c.GetString("sessionID"))
+	if err != nil {
+		serverError(c, "Database error")
+		return
+	}
+	defer rows.Close()
+
+	sessions := make([]models.Session, 0)
+	for rows.Next() {
+		var s models.Session
+		if err := rows.Scan(&s.SessionID, &s.DeviceName, &s.Platform, &s.CreatedAt, &s.LastSeenAt, &s.Current); err != nil {
+			serverError(c, "Database error")
+			return
+		}
+		sessions = append(sessions, s)
+	}
+	if err := rows.Err(); err != nil {
+		serverError(c, "Database error")
+		return
+	}
+	c.JSON(http.StatusOK, sessions)
+}
+
+func (h *Handler) SignOutDevice(c *gin.Context) {
+	sessionID := c.Param("session_id")
+	if err := uuid.Validate(sessionID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id must be a UUID"})
+		return
+	}
+	res, err := h.DB.ExecContext(c.Request.Context(), `DELETE FROM user_sessions WHERE session_id = $1 AND user_id = $2`,
+		sessionID, c.GetString("userID"))
+	if err != nil {
+		serverError(c, "Database error")
+		return
+	}
+	if rows, err := res.RowsAffected(); err != nil || rows == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -619,7 +671,7 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 			return
 		}
 	}
-	h.respondWithSession(c, tx, userID, http.StatusOK)
+	h.respondWithSession(c, tx, userID, req.Device, http.StatusOK)
 }
 
 // countFailedAttempt burns the code after maxEraseAttempts wrong guesses.

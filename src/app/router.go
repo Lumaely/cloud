@@ -40,7 +40,9 @@ func NewRouter(h *handlers.Handler, db *sql.DB, auth *services.AuthService, trus
 		protected.DELETE("/users/me", h.DeleteUserProfile)
 		protected.GET("/users/me/keys", h.GetKeys)
 		protected.PUT("/users/me/password", h.ChangePassword)
+		protected.GET("/users/me/sessions", h.ListSessions)
 		protected.DELETE("/users/me/sessions", h.SignOutAllDevices)
+		protected.DELETE("/users/me/sessions/:session_id", h.SignOutDevice)
 		protected.DELETE("/users/me/diary", h.ResetDiary)
 		protected.GET("/users/me/storage", h.GetStorage)
 

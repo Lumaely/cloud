@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -39,6 +40,14 @@ func LookupSession(ctx context.Context, db *sql.DB, auth *services.AuthService, 
 	return userID, sessionID, err
 }
 
+// touchSession is best effort: a failed refresh must not refuse the request.
+func touchSession(ctx context.Context, db *sql.DB, sessionID string) {
+	_, err := db.ExecContext(ctx, `UPDATE user_sessions SET last_seen_at = NOW() WHERE session_id = $1 AND last_seen_at < NOW() - INTERVAL '5 minutes'`, sessionID)
+	if err != nil {
+		log.Printf("last_seen_at of session %s not refreshed: %v", sessionID, err)
+	}
+}
+
 func AuthRequired(db *sql.DB, auth *services.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, sessionID, err := LookupSession(c.Request.Context(), db, auth, c.GetHeader("Authorization"))
@@ -52,6 +61,7 @@ func AuthRequired(db *sql.DB, auth *services.AuthService) gin.HandlerFunc {
 		case err != nil:
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		default:
+			touchSession(c.Request.Context(), db, sessionID)
 			c.Set("userID", userID)
 			c.Set("sessionID", sessionID)
 			c.Next()

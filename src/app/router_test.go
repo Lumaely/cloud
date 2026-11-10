@@ -40,7 +40,7 @@ func routes(r *gin.Engine) []string {
 
 var protectedRoutes = []string{
 	"GET /users/me", "DELETE /users/me", "GET /users/me/keys", "PUT /users/me/password",
-	"DELETE /users/me/sessions", "DELETE /users/me/diary", "GET /users/me/storage",
+	"GET /users/me/sessions", "DELETE /users/me/sessions", "DELETE /users/me/sessions/:session_id", "DELETE /users/me/diary", "GET /users/me/storage",
 	"GET /sync", "POST /sync",
 	"GET /attachments/:attachment_id", "GET /attachments/:attachment_id/preview", "DELETE /attachments/:attachment_id",
 }
@@ -83,7 +83,7 @@ func TestRouterProtectsPrivateRoutes(t *testing.T) {
 	id := "33333333-3333-3333-3333-333333333333"
 	for _, route := range all {
 		method, path, _ := strings.Cut(route, " ")
-		path = strings.NewReplacer(":attachment_id", id, ":id", id).Replace(path)
+		path = strings.NewReplacer(":attachment_id", id, ":session_id", id, ":id", id).Replace(path)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(method, path, nil))
 		if w.Code != http.StatusUnauthorized {

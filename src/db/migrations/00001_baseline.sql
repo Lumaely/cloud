@@ -23,8 +23,12 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     token_hash VARCHAR(64) UNIQUE NOT NULL,
+    device_name TEXT NULL,
+    platform TEXT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Refreshed at most every 5 minutes by AuthRequired.
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Short-lived single-use codes: password recovery and erase-and-start-over.
@@ -60,8 +64,9 @@ CREATE TABLE IF NOT EXISTS entry_attachments (
     preview_object_key TEXT NULL,
     encrypted_aes_key BYTEA NOT NULL,
     media_type TEXT NOT NULL,
-    -- File plus preview, counted against the storage quota.
+    -- File only: the quota counts it, not the preview.
     size_bytes BIGINT NOT NULL,
+    preview_size_bytes BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

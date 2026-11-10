@@ -202,7 +202,7 @@ func TestValidateOperation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid operation rejected: %v", err)
 	}
-	if len(pending) != 1 || pending[0].size != 10 || pending[0].mediaType != "application/octet-stream" {
+	if len(pending) != 1 || pending[0].header.Size != 5 || pending[0].previewSize() != 5 || pending[0].mediaType != "application/octet-stream" {
 		t.Errorf("pending = %+v", pending)
 	}
 

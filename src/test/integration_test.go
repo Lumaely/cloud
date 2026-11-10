@@ -429,7 +429,7 @@ func TestIntegrationEntrySyncLifecycle(t *testing.T) {
 		t.Fatalf("statuses = %s (%+v)", statuses, res)
 	}
 	one := *res[0].Entry
-	if len(one.Attachments) != 1 || !one.Attachments[0].HasPreview || one.Attachments[0].SizeBytes != 8 || one.Version != 1 {
+	if len(one.Attachments) != 1 || !one.Attachments[0].HasPreview || one.Attachments[0].SizeBytes != 3 || one.Attachments[0].PreviewSizeBytes != 5 || one.Version != 1 {
 		t.Errorf("entry one = %+v", one)
 	}
 
