@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mood_entries_seq ON mood_entries(user_id, seq);
 CREATE INDEX IF NOT EXISTS idx_entry_attachments_entry ON entry_attachments(entry_id);
 CREATE INDEX IF NOT EXISTS idx_patterns_seq ON patterns(user_id, seq);
