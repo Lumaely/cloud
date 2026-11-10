@@ -68,17 +68,17 @@ Returned by register, login, recovery and `GET /users/me/keys`.
 
 ### Devices
 
-Register, login, recovery finish and erase confirm each open one session. `device` names it; both fields are optional, at most 64 characters each, else 400.
+Register, login, recovery finish and erase confirm each open one session. `device` names it; both fields are optional, at most 64 characters each, else 400. The server can read them: send a model name, never the user's name.
 
 ```json
-{"email": "…", "auth_key": "base64", "device": {"name": "Alice's iPhone", "platform": "ios"}}
+{"email": "…", "auth_key": "base64", "device": {"name": "iPhone 15", "platform": "ios"}}
 ```
 
 `GET /users/me/sessions` lists non-expired sessions, most recently seen first. `current` marks the caller's session. Missing device fields are `null`.
 
 ```json
 [
-  {"session_id": "uuid", "device_name": "Alice's iPhone", "platform": "ios",
+  {"session_id": "uuid", "device_name": "iPhone 15", "platform": "ios",
    "created_at": "2026-11-10T09:00:00Z", "last_seen_at": "2026-11-10T18:42:00Z", "current": true},
   {"session_id": "uuid", "device_name": null, "platform": null,
    "created_at": "2026-10-01T12:00:00Z", "last_seen_at": "2026-10-30T08:15:00Z", "current": false}
