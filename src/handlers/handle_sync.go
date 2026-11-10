@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 const (
@@ -214,7 +213,7 @@ func (h *Handler) applyOperation(ctx context.Context, userID string, op models.E
 
 func validateOperation(op models.EntryOperation, files map[string][]*multipart.FileHeader) ([]pendingFile, time.Time, error) {
 	if op.EntryID != "" {
-		if err := uuid.Validate(op.EntryID); err != nil {
+		if _, ok := canonicalUUID(op.EntryID); !ok {
 			return nil, time.Time{}, invalid("entry_id must be a UUID")
 		}
 		if op.Version < 1 {
@@ -445,7 +444,7 @@ func (h *Handler) upload(ctx context.Context, key string, fh *multipart.FileHead
 
 // Objects deleted before commit: a storage failure rolls back so the client can retry.
 func (h *Handler) deleteEntry(ctx context.Context, userID string, op models.EntryOperation) (string, error) {
-	if err := uuid.Validate(op.EntryID); err != nil {
+	if _, ok := canonicalUUID(op.EntryID); !ok {
 		return "", invalid("entry_id must be a UUID")
 	}
 	tx, err := h.DB.BeginTx(ctx, nil)
