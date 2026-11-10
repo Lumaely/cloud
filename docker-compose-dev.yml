@@ -1,3 +1,6 @@
+# Distinct project names keep dev and prod containers and volumes apart.
+name: lumaely-dev
+
 services:
   db:
     image: postgres:17-alpine
@@ -10,7 +13,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s

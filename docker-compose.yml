@@ -1,3 +1,6 @@
+# Distinct project names keep dev and prod containers and volumes apart.
+name: lumaely
+
 services:
     db:
       image: postgres:17-alpine
@@ -8,7 +11,6 @@ services:
         POSTGRES_DB: ${DB_NAME}
       volumes:
         - postgres_data:/var/lib/postgresql/data
-        - ./db/init:/docker-entrypoint-initdb.d
       healthcheck:
         test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
         interval: 5s
@@ -32,9 +34,9 @@ services:
         retries: 10
 
     app:
-      build:
-        context: .
-        dockerfile: Dockerfile
+      # Built by src/scripts/build_prod; never pulled.
+      image: lumaely-cloud:${LUMAELY_VERSION:-latest}
+      pull_policy: never
       restart: always
       ports:
         - "8080:8080"

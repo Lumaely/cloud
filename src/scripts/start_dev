@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Starts the dev stack (Postgres, MinIO, API with live reload); see README.md "Scripts".
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: src/scripts/start_dev [docker compose up options, e.g. -d]
+
+Builds the dev image and starts db, s3 and app from docker-compose-dev.yml.
+The app applies pending migrations, then serves on http://localhost:8080 and rebuilds on file changes.
+EOF
+  exit 0
+fi
+
+if [[ ! -f .env ]]; then
+  echo ".env is missing: copy .env.sample to .env and fill it" >&2
+  exit 1
+fi
+
+exec docker compose -f docker-compose-dev.yml up --build "$@"

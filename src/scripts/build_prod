@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Builds the production image lumaely-cloud:<version> and :latest; see README.md "Scripts".
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: src/scripts/build_prod [VERSION]
+
+Builds the production image, tagged lumaely-cloud:VERSION and lumaely-cloud:latest.
+VERSION defaults to `git describe --tags --always --dirty`, or "dev" outside a git checkout; /health reports it.
+EOF
+  exit 0
+fi
+
+version="${1:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+
+docker build --build-arg VERSION="$version" -t "lumaely-cloud:$version" -t lumaely-cloud:latest .
+echo "built lumaely-cloud:$version (also tagged latest)"

@@ -56,6 +56,9 @@ jobs:
           docker logs minio
           exit 1
 
+      - name: Lint scripts
+        run: shellcheck src/scripts/*
+
       - name: Vet
         run: go vet ./...
 

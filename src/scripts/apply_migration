@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Applies goose database migrations; see README.md "Scripts".
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+usage() {
+  cat <<'EOF'
+Usage: src/scripts/apply_migration [--dev | --prod | --local] [--status | TARGET]
+
+  TARGET     Migration file name, path or version (00002_x.sql, db/migrations/00002_x.sql, 2).
+             Applies every pending migration up to and including TARGET.
+             Without TARGET, applies every pending migration.
+  --status   Lists applied and pending migrations, changes nothing.
+  --dev      Runs in the dev compose stack (default).
+  --prod     Runs in the prod compose stack, with the built image.
+  --local    Runs `go run .` on this machine; DATABASE_URL or DB_* select the database.
+EOF
+}
+
+mode=dev
+action=(up)
+target_set=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dev | --prod | --local) mode="${1#--}" ;;
+    --status) action=(status) ;;
+    -h | --help) usage; exit 0 ;;
+    -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    *)
+      if $target_set; then
+        echo "only one TARGET is allowed" >&2
+        exit 2
+      fi
+      action=(up-to "$1")
+      target_set=true
+      ;;
+  esac
+  shift
+done
+
+require_env_file() {
+  if [[ ! -f .env ]]; then
+    echo ".env is missing: copy .env.sample to .env and fill it" >&2
+    exit 1
+  fi
+}
+
+case "$mode" in
+  local)
+    exec go run . migrate "${action[@]}"
+    ;;
+  dev)
+    require_env_file
+    exec docker compose -f docker-compose-dev.yml run --rm --entrypoint go app run . migrate "${action[@]}"
+    ;;
+  prod)
+    require_env_file
+    exec docker compose -f docker-compose.yml run --rm app migrate "${action[@]}"
+    ;;
+esac

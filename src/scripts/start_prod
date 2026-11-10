@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Starts the production stack from a built image and waits until the API is healthy; see README.md "Scripts".
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: src/scripts/start_prod [VERSION]
+
+Starts db, s3 and app from docker-compose.yml in the background, with image lumaely-cloud:VERSION
+(default: latest, built by src/scripts/build_prod). The app applies pending migrations before serving.
+Waits up to 120 s for http://localhost:8080/health, then exits 0, or 1 with the app logs.
+EOF
+  exit 0
+fi
+
+export LUMAELY_VERSION="${1:-latest}"
+
+if [[ ! -f .env ]]; then
+  echo ".env is missing: copy .env.sample to .env and fill it" >&2
+  exit 1
+fi
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+missing=()
+for var in DB_USER DB_PASSWORD DB_NAME MINIO_ROOT_USER MINIO_ROOT_PASSWORD SERVER_SECRET; do
+  [[ -n "${!var:-}" ]] || missing+=("$var")
+done
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo "set these variables in .env: ${missing[*]}" >&2
+  exit 1
+fi
+
+if ! docker image inspect "lumaely-cloud:$LUMAELY_VERSION" >/dev/null 2>&1; then
+  echo "image lumaely-cloud:$LUMAELY_VERSION not found: run src/scripts/build_prod first" >&2
+  exit 1
+fi
+
+docker compose -f docker-compose.yml up -d
+
+for _ in $(seq 1 60); do
+  if health="$(curl -fsS http://localhost:8080/health 2>/dev/null)"; then
+    echo "lumaely-cloud:$LUMAELY_VERSION is up: $health"
+    exit 0
+  fi
+  sleep 2
+done
+
+echo "the API did not become healthy within 120 s; last app logs:" >&2
+docker compose -f docker-compose.yml logs --tail 50 app >&2
+exit 1
