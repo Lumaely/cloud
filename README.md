@@ -45,6 +45,7 @@ Upgrading a checkout that still runs the `cloud` Compose project (containers and
 1. Stop its containers: `docker compose -f docker-compose-dev.yml -p cloud down`.
 2. To keep that data, copy the `cloud_postgres_data` and `cloud_minio_data` volumes into `lumaely_postgres_data` and `lumaely_minio_data` before the first `start_prod`.
 3. Recreate a dev database whose schema came from `db/init/01_schema.sql`: `docker compose -f docker-compose-dev.yml down -v`. goose would otherwise mark it as migration 1 whatever its tables are.
+4. Recreate the same way a dev database migrated before the last edit of `00001_baseline.sql` (it lacks `user_sessions.last_seen_at`). goose sees migration 1 as applied and prints `no migration to apply`; sign-in and every authenticated route then return 500.
 
 ## Scripts
 
