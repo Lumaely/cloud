@@ -103,8 +103,12 @@ func Migrate(db *sql.DB, dir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	results, err := p.Up(ctx)
-	for _, r := range results {
-		log.Printf("migration %s applied", r.Source.Path)
+	for _, r := range withPartial(results, err) {
+		if r.Error != nil {
+			log.Printf("migration %s failed: %v", r.Source.Path, r.Error)
+		} else {
+			log.Printf("migration %s applied", r.Source.Path)
+		}
 	}
 	return err
 }

@@ -20,10 +20,11 @@ EOF
 mode=dev
 action=(up)
 target_set=false
+status=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dev | --prod | --local) mode="${1#--}" ;;
-    --status) action=(status) ;;
+    --status) status=true ;;
     -h | --help) usage; exit 0 ;;
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     *)
@@ -37,6 +38,14 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if $status; then
+  if $target_set; then
+    echo "--status lists migrations and takes no TARGET" >&2
+    exit 2
+  fi
+  action=(status)
+fi
 
 require_env_file() {
   if [[ ! -f .env ]]; then

@@ -48,7 +48,7 @@ func migrateCommand(ctx context.Context, args []string, out io.Writer) error {
 	switch {
 	case len(args) == 0 || (len(args) == 1 && args[0] == "up"):
 		results, err := p.Up(ctx)
-		printResults(out, results)
+		printResults(out, results, err)
 		return err
 	case len(args) == 2 && args[0] == "up-to":
 		return migrateUpTo(ctx, p, args[1], out)
@@ -65,15 +65,17 @@ func migrateUpTo(ctx context.Context, p *goose.Provider, target string, out io.W
 	if err != nil {
 		return err
 	}
-	current, err := p.GetDBVersion(ctx)
+	statuses, err := p.Status(ctx)
 	if err != nil {
 		return err
 	}
-	if src.Version <= current {
-		return fmt.Errorf("migration %s is already applied (database is at version %d)", filepath.Base(src.Path), current)
+	for _, s := range statuses {
+		if s.Source.Version == src.Version && s.State == goose.StateApplied {
+			return fmt.Errorf("migration %s is already applied", filepath.Base(src.Path))
+		}
 	}
 	results, err := p.UpTo(ctx, src.Version)
-	printResults(out, results)
+	printResults(out, results, err)
 	return err
 }
 
@@ -88,8 +90,10 @@ func resolveTarget(sources []*goose.Source, target string) (*goose.Source, error
 	return nil, fmt.Errorf("unknown migration %q", target)
 }
 
-func printResults(out io.Writer, results []*goose.MigrationResult) {
-	if len(results) == 0 {
+// printResults lists what ran; on failure goose returns the applied and failed migrations in a PartialError.
+func printResults(out io.Writer, results []*goose.MigrationResult, err error) {
+	results = withPartial(results, err)
+	if len(results) == 0 && err == nil {
 		fmt.Fprintln(out, "no migration to apply")
 	}
 	for _, r := range results {
@@ -114,4 +118,12 @@ func printStatus(ctx context.Context, p *goose.Provider, out io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func withPartial(results []*goose.MigrationResult, err error) []*goose.MigrationResult {
+	var partial *goose.PartialError
+	if errors.As(err, &partial) {
+		results = append(append(results, partial.Applied...), partial.Failed)
+	}
+	return results
 }

@@ -49,6 +49,9 @@ services:
     env_file:
       - .env
     environment:
+      # Host-only settings; the container uses DB_* and its built-in migrations.
+      DATABASE_URL: ""
+      MIGRATIONS_DIR: ""
       DB_HOST: db
       DB_PORT: 5432
       MINIO_ENDPOINT: s3:9000

@@ -2,6 +2,7 @@ package test
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,7 +71,9 @@ func (e *scriptEnv) tables() []string {
 	var names []string
 	for rows.Next() {
 		var n string
-		rows.Scan(&n)
+		if err := rows.Scan(&n); err != nil {
+			e.t.Fatal(err)
+		}
 		names = append(names, n)
 	}
 	return names
@@ -162,6 +165,14 @@ func TestApplyMigrationScriptRollsBackFailingMigration(t *testing.T) {
 	if err == nil {
 		t.Fatalf("failing migration reported success:\n%s", out)
 	}
+	for _, want := range []string{"applied  00001_create_alpha.sql", "failed   00002_broken.sql"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output misses %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "no migration to apply") {
+		t.Errorf("output claims nothing ran:\n%s", out)
+	}
 	assertTables(t, e, "alpha")
 }
 
@@ -196,9 +207,12 @@ func TestApplyMigrationScriptAppliesEmbeddedBaseline(t *testing.T) {
 		t.Fatalf("baseline failed: %v\n%s", err, out)
 	}
 	var tables int
-	e.db.QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN
+	err = e.db.QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN
 		('users', 'user_sessions', 'user_challenges', 'mood_entries', 'entry_attachments', 'patterns',
 		 'activities', 'places', 'bookmark_folders', 'bookmarks', 'feedback')`).Scan(&tables)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if tables != 11 {
 		t.Errorf("baseline created %d of 11 tables", tables)
 	}
@@ -207,4 +221,17 @@ func TestApplyMigrationScriptAppliesEmbeddedBaseline(t *testing.T) {
 	if err != nil || !strings.Contains(out, "no migration to apply") {
 		t.Errorf("second run should be a no-op: %v\n%s", err, out)
 	}
+}
+
+func TestApplyMigrationScriptRejectsStatusWithTarget(t *testing.T) {
+	e := newScriptEnv(t, migrationFixtures)
+
+	for _, args := range [][]string{{"--status", "2"}, {"2", "--status"}} {
+		out, err := e.run(args...)
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 {
+			t.Errorf("%v: err = %v, want exit code 2\n%s", args, err, out)
+		}
+	}
+	assertTables(t, e, "")
 }
