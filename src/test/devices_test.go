@@ -310,3 +310,20 @@ func TestIntegrationSignInPrunesExpiredAndStalestSessions(t *testing.T) {
 	expect(t, s.do(http.MethodGet, "/users/me", token, nil), http.StatusOK)
 	expect(t, s.do(http.MethodGet, "/users/me", a.token, nil), http.StatusOK)
 }
+
+func TestIntegrationSignInNeverPrunesItsOwnSession(t *testing.T) {
+	s := newStack(t, 0)
+	a := s.register("self@test.local")
+	_, err := s.db.Exec(`
+		INSERT INTO user_sessions (user_id, token_hash, expires_at, last_seen_at)
+		SELECT $1, md5(i::text), NOW() + INTERVAL '1 day', NOW() + INTERVAL '1 minute'
+		FROM generate_series(1, 50) AS i
+	`, a.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	token := s.loginOn(a, "New", "ios")
+
+	expect(t, s.do(http.MethodGet, "/users/me", token, nil), http.StatusOK)
+}

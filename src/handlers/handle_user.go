@@ -68,30 +68,32 @@ func (h *Handler) createSession(ctx context.Context, q queryer, userID string, d
 	if device == nil {
 		device = &models.Device{}
 	}
-	_, err = q.ExecContext(ctx, `
+	var sessionID string
+	err = q.QueryRowContext(ctx, `
 		INSERT INTO user_sessions (user_id, token_hash, expires_at, device_name, platform)
 		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''))
-	`, userID, tokenHash, time.Now().Add(sessionTTL), device.Name, device.Platform)
+		RETURNING session_id
+	`, userID, tokenHash, time.Now().Add(sessionTTL), device.Name, device.Platform).Scan(&sessionID)
 	if err != nil {
 		return "", err
 	}
-	if err := pruneSessions(ctx, q, userID); err != nil {
+	if err := pruneSessions(ctx, q, userID, sessionID); err != nil {
 		return "", err
 	}
 	return rawToken, nil
 }
 
-// pruneSessions drops expired sessions and signs out the least recently seen beyond maxSessionsPerUser.
-func pruneSessions(ctx context.Context, q queryer, userID string) error {
+// pruneSessions drops expired sessions and keeps newID plus the most recently seen others, up to maxSessionsPerUser.
+func pruneSessions(ctx context.Context, q queryer, userID, newID string) error {
 	_, err := q.ExecContext(ctx, `
 		DELETE FROM user_sessions
 		WHERE user_id = $1 AND (expires_at <= NOW() OR session_id IN (
 			SELECT session_id FROM user_sessions
-			WHERE user_id = $1 AND expires_at > NOW()
+			WHERE user_id = $1 AND expires_at > NOW() AND session_id <> $3
 			ORDER BY last_seen_at DESC, created_at DESC
 			OFFSET $2
 		))
-	`, userID, maxSessionsPerUser)
+	`, userID, maxSessionsPerUser-1, newID)
 	return err
 }
 
