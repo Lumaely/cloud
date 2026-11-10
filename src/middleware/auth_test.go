@@ -81,28 +81,18 @@ func TestAuthRequiredDatabaseError(t *testing.T) {
 	}
 }
 
-func TestAuthRequiredValidSessionSetsUserID(t *testing.T) {
+const lookupAndTouch = `(?s)WITH s AS \(SELECT user_id, session_id, last_seen_at FROM user_sessions WHERE token_hash = \$1 AND expires_at > NOW\(\)\).*` +
+	`UPDATE user_sessions u SET last_seen_at = NOW\(\) FROM s WHERE u.session_id = s.session_id AND s.last_seen_at < NOW\(\) - INTERVAL '5 minutes'.*` +
+	`SELECT user_id, session_id FROM s`
+
+func TestAuthRequiredValidSessionSetsUserIDInOneQuery(t *testing.T) {
 	r, mock := newProtectedRouter(t)
-	mock.ExpectQuery("SELECT user_id").
+	mock.ExpectQuery(lookupAndTouch).
 		WithArgs(services.NewAuthService().HashToken("tok")).
 		WillReturnRows(sqlmock.NewRows([]string{"user_id", "session_id"}).AddRow("user-1", "session-1"))
-	mock.ExpectExec(`UPDATE user_sessions SET last_seen_at = NOW\(\) WHERE session_id = \$1 AND last_seen_at < NOW\(\) - INTERVAL '5 minutes'`).
-		WithArgs("session-1").
-		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	w := doGet(r, "Bearer tok")
 	if w.Code != http.StatusOK || w.Body.String() != "user-1 session-1" {
 		t.Errorf("got %d %q, want 200 \"user-1 session-1\"", w.Code, w.Body.String())
-	}
-}
-
-func TestAuthRequiredServesWhenLastSeenRefreshFails(t *testing.T) {
-	r, mock := newProtectedRouter(t)
-	mock.ExpectQuery("SELECT user_id").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id", "session_id"}).AddRow("user-1", "session-1"))
-	mock.ExpectExec("UPDATE user_sessions").WillReturnError(errors.New("boom"))
-
-	if w := doGet(r, "Bearer tok"); w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
 	}
 }

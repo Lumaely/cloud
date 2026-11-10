@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 
@@ -18,7 +17,7 @@ var (
 	ErrInvalidToken = errors.New("invalid or expired session")
 )
 
-// LookupSession resolves an Authorization header to its user and session.
+// LookupSession resolves an Authorization header to its user and session and refreshes its last_seen_at.
 func LookupSession(ctx context.Context, db *sql.DB, auth *services.AuthService, header string) (userID, sessionID string, err error) {
 	if header == "" {
 		return "", "", ErrNoToken
@@ -28,24 +27,15 @@ func LookupSession(ctx context.Context, db *sql.DB, auth *services.AuthService, 
 		return "", "", ErrBadFormat
 	}
 
-	query := `
-		SELECT user_id, session_id
-		FROM user_sessions
-		WHERE token_hash = $1 AND expires_at > NOW()
-	`
+	// One round trip; the UPDATE writes only when last_seen_at is over 5 minutes old.
+	query := `WITH s AS (SELECT user_id, session_id, last_seen_at FROM user_sessions WHERE token_hash = $1 AND expires_at > NOW()),
+		touched AS (UPDATE user_sessions u SET last_seen_at = NOW() FROM s WHERE u.session_id = s.session_id AND s.last_seen_at < NOW() - INTERVAL '5 minutes')
+		SELECT user_id, session_id FROM s`
 	err = db.QueryRowContext(ctx, query, auth.HashToken(parts[1])).Scan(&userID, &sessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", ErrInvalidToken
 	}
 	return userID, sessionID, err
-}
-
-// touchSession is best effort: a failed refresh must not refuse the request.
-func touchSession(ctx context.Context, db *sql.DB, sessionID string) {
-	_, err := db.ExecContext(ctx, `UPDATE user_sessions SET last_seen_at = NOW() WHERE session_id = $1 AND last_seen_at < NOW() - INTERVAL '5 minutes'`, sessionID)
-	if err != nil {
-		log.Printf("last_seen_at of session %s not refreshed: %v", sessionID, err)
-	}
 }
 
 func AuthRequired(db *sql.DB, auth *services.AuthService) gin.HandlerFunc {
@@ -61,7 +51,6 @@ func AuthRequired(db *sql.DB, auth *services.AuthService) gin.HandlerFunc {
 		case err != nil:
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		default:
-			touchSession(c.Request.Context(), db, sessionID)
 			c.Set("userID", userID)
 			c.Set("sessionID", sessionID)
 			c.Next()

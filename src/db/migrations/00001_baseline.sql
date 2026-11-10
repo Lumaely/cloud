@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     platform TEXT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- Refreshed at most every 5 minutes by AuthRequired.
+    -- Refreshed at most every 5 minutes by middleware.LookupSession.
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
