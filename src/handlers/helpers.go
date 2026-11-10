@@ -12,6 +12,7 @@ import (
 	"cloud/src/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 const (
@@ -76,6 +77,15 @@ func pageMeta[T any](ctx context.Context, q queryer, table, userID string, p pag
 	}
 	err := q.QueryRowContext(ctx, `SELECT diary_epoch FROM users WHERE user_id = $1`, userID).Scan(&page.DiaryEpoch)
 	return page, err
+}
+
+// canonicalUUID accepts every form uuid.Parse does (urn:uuid:, braces) and returns the one Postgres reads.
+func canonicalUUID(s string) (string, bool) {
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return "", false
+	}
+	return u.String(), true
 }
 
 func normalizeEmail(email string) string {

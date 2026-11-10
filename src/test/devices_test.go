@@ -245,3 +245,34 @@ func TestIntegrationPreviewsOutsideQuota(t *testing.T) {
 		t.Errorf("objects = %v, want 4", keys)
 	}
 }
+
+func TestIntegrationURNUUIDsAccepted(t *testing.T) {
+	s := newStack(t, 0)
+	a := s.register("urn@test.local")
+	other := s.loginOn(a, "Other", "ios")
+	urn := func(id string) string { return "urn:uuid:" + id }
+
+	entry := s.createEntry(a.token, "u1", file{name: "f", mediaType: "image/png", content: "x"})
+	expect(t, s.do(http.MethodGet, "/attachments/"+urn(entry.Attachments[0].AttachmentID), a.token, nil), http.StatusOK)
+
+	rec := decode[models.Record](t, s.do(http.MethodPost, "/patterns", a.token, map[string]any{"blob": []byte("p")}))
+	expect(t, s.do(http.MethodPut, "/patterns/"+urn(rec.ID), a.token, map[string]any{"blob": []byte("q"), "version": 1}), http.StatusOK)
+	expect(t, s.do(http.MethodPost, "/bookmarks", a.token, map[string]any{"blob": []byte("b"), "entry_id": urn(entry.EntryID)}), http.StatusCreated)
+
+	update := newEntry("u", "u2")
+	update["entry_id"], update["version"] = urn(entry.EntryID), entry.Version
+	if res := s.push(a.token, []map[string]any{update}); res[0].Status != "updated" {
+		t.Errorf("sync update by urn = %+v", res[0])
+	}
+
+	var otherID string
+	for _, v := range s.sessions(a.token) {
+		if !v.Current {
+			otherID = v.SessionID
+		}
+	}
+	expect(t, s.do(http.MethodDelete, "/users/me/sessions/"+urn(otherID), a.token, nil), http.StatusNoContent)
+	expect(t, s.do(http.MethodGet, "/users/me", other, nil), http.StatusUnauthorized)
+	expect(t, s.do(http.MethodDelete, "/attachments/"+urn(entry.Attachments[0].AttachmentID), a.token, nil), http.StatusNoContent)
+	expect(t, s.do(http.MethodDelete, "/patterns/"+urn(rec.ID), a.token, nil), http.StatusNoContent)
+}

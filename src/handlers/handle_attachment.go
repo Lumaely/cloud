@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 func (h *Handler) DownloadAttachment(c *gin.Context) {
@@ -19,8 +18,8 @@ func (h *Handler) DownloadAttachmentPreview(c *gin.Context) {
 
 // serveAttachment streams keyColumn of a live entry owned by the caller; Range requests get 206.
 func (h *Handler) serveAttachment(c *gin.Context, keyColumn string) {
-	attachmentID := c.Param("attachment_id")
-	if err := uuid.Validate(attachmentID); err != nil {
+	attachmentID, ok := canonicalUUID(c.Param("attachment_id"))
+	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "attachment_id must be a UUID"})
 		return
 	}
@@ -55,8 +54,8 @@ func (h *Handler) serveAttachment(c *gin.Context, keyColumn string) {
 
 // DeleteAttachment removes one file; the entry gets a new version so other devices refetch it.
 func (h *Handler) DeleteAttachment(c *gin.Context) {
-	attachmentID := c.Param("attachment_id")
-	if err := uuid.Validate(attachmentID); err != nil {
+	attachmentID, ok := canonicalUUID(c.Param("attachment_id"))
+	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "attachment_id must be a UUID"})
 		return
 	}

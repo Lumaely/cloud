@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -460,8 +459,8 @@ func (h *Handler) ListSessions(c *gin.Context) {
 }
 
 func (h *Handler) SignOutDevice(c *gin.Context) {
-	sessionID := c.Param("session_id")
-	if err := uuid.Validate(sessionID); err != nil {
+	sessionID, ok := canonicalUUID(c.Param("session_id"))
+	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id must be a UUID"})
 		return
 	}

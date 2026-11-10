@@ -190,6 +190,9 @@ func (h *Handler) applyOperation(ctx context.Context, userID string, op models.E
 	var entry *models.MoodEntry
 	var err error
 
+	if id, ok := canonicalUUID(op.EntryID); ok {
+		op.EntryID = id
+	}
 	if op.Deleted {
 		status, err = h.deleteEntry(ctx, userID, op)
 	} else {

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // Resource describes one encrypted per-feature collection (patterns, bookmarks, ...).
@@ -147,10 +146,12 @@ func (h *Handler) bindRecord(c *gin.Context, tx *sql.Tx, r Resource, userID stri
 			}
 			continue
 		}
-		if err := uuid.Validate(*v); err != nil {
+		id, ok := canonicalUUID(*v)
+		if !ok {
 			badRequest(c, fmt.Errorf("%s must be a UUID", ref.Column))
 			return in, nil, false
 		}
+		*v = id
 		idCol := "id"
 		if ref.Table == "mood_entries" {
 			idCol = "entry_id"
@@ -217,8 +218,8 @@ func (h *Handler) UpdateResource(r Resource) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 		userID := c.GetString("userID")
-		id := c.Param("id")
-		if err := uuid.Validate(id); err != nil {
+		id, ok := canonicalUUID(c.Param("id"))
+		if !ok {
 			badRequest(c, errors.New("id must be a UUID"))
 			return
 		}
@@ -265,8 +266,8 @@ func (h *Handler) DeleteResource(r Resource) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 		userID := c.GetString("userID")
-		id := c.Param("id")
-		if err := uuid.Validate(id); err != nil {
+		id, ok := canonicalUUID(c.Param("id"))
+		if !ok {
 			badRequest(c, errors.New("id must be a UUID"))
 			return
 		}
