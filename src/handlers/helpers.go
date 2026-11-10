@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"cloud/models"
+	"cloud/src/models"
 
 	"github.com/gin-gonic/gin"
 )

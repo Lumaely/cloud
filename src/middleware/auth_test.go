@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"cloud/services"
+	"cloud/src/services"
 	"database/sql"
 	"errors"
 	"net/http"

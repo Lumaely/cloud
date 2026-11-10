@@ -1,4 +1,4 @@
-package main
+package test
 
 import (
 	"database/sql"
@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // migrationFixtures are three small migrations, so a target can sit between applied and pending ones.
@@ -50,7 +52,7 @@ func newScriptEnv(t *testing.T, fixtures map[string]string) *scriptEnv {
 
 func (e *scriptEnv) run(args ...string) (string, error) {
 	e.t.Helper()
-	cmd := exec.Command("src/scripts/apply_migration", append([]string{"--local"}, args...)...)
+	cmd := exec.Command("../scripts/apply_migration", append([]string{"--local"}, args...)...)
 	// Empty MIGRATIONS_DIR selects the embedded migrations.
 	cmd.Env = append(os.Environ(), "DATABASE_URL="+e.dsn, "MIGRATIONS_DIR="+e.dir)
 	out, err := cmd.CombinedOutput()

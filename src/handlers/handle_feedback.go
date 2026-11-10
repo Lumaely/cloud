@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"cloud/middleware"
-	"cloud/models"
+	"cloud/src/middleware"
+	"cloud/src/models"
 	"net/http"
 
 	"github.com/gin-gonic/gin"

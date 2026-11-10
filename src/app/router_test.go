@@ -1,8 +1,8 @@
-package main
+package app
 
 import (
-	"cloud/handlers"
-	"cloud/services"
+	"cloud/src/handlers"
+	"cloud/src/services"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -23,7 +23,7 @@ func newTestRouter(t *testing.T, mode string) *gin.Engine {
 	t.Cleanup(func() { db.Close() })
 	auth := services.NewAuthService()
 	h := handlers.NewHandler(db, &services.MockStripeService{}, auth, nil, nil, handlers.Settings{Mode: mode})
-	r, err := newRouter(h, db, auth, nil)
+	r, err := NewRouter(h, db, auth, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

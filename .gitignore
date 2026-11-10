@@ -34,5 +34,5 @@ go.work.sum
 # air build output
 tmp/
 
-# go build output
-/cloud
+# go build -o main ./src output
+/main

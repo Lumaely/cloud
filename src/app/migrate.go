@@ -1,7 +1,7 @@
-package main
+package app
 
 import (
-	"cloud/db/migrations"
+	"cloud/src/db/migrations"
 	"context"
 	"database/sql"
 	"errors"

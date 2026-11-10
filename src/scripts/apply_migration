@@ -7,13 +7,13 @@ usage() {
   cat <<'EOF'
 Usage: src/scripts/apply_migration [--dev | --prod | --local] [--status | TARGET]
 
-  TARGET     Migration file name, path or version (00002_x.sql, db/migrations/00002_x.sql, 2).
+  TARGET     Migration file name, path or version (00002_x.sql, src/db/migrations/00002_x.sql, 2).
              Applies every pending migration up to and including TARGET.
              Without TARGET, applies every pending migration.
   --status   Lists applied and pending migrations, changes nothing.
   --dev      Runs in the dev compose stack (default).
   --prod     Runs in the prod compose stack, with the built image.
-  --local    Runs `go run .` on this machine; DATABASE_URL or DB_* select the database.
+  --local    Runs `go run ./src` on this machine; DATABASE_URL or DB_* select the database.
 EOF
 }
 
@@ -47,11 +47,11 @@ require_env_file() {
 
 case "$mode" in
   local)
-    exec go run . migrate "${action[@]}"
+    exec go run ./src migrate "${action[@]}"
     ;;
   dev)
     require_env_file
-    exec docker compose -f docker-compose-dev.yml run --rm --entrypoint go app run . migrate "${action[@]}"
+    exec docker compose -f docker-compose-dev.yml run --rm --entrypoint go app run ./src migrate "${action[@]}"
     ;;
   prod)
     require_env_file

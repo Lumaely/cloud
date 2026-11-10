@@ -12,7 +12,7 @@ type User struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// KeyMaterial is what the password seals; see docs/API.md.
+// KeyMaterial is what the password seals; see src/docs/API.md.
 type KeyMaterial struct {
 	KDFSalt            []byte          `json:"kdf_salt" binding:"required"`
 	KDFParams          json.RawMessage `json:"kdf_params" binding:"required"`

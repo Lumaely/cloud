@@ -9,5 +9,5 @@ RUN go mod download
 
 COPY . .
 
-ENTRYPOINT ["air"]
-# CMD ["air", "-c", ".air.toml"]
+# The main package is in src/; air rebuilds it on every change.
+ENTRYPOINT ["air", "--build.cmd", "go build -o ./tmp/main ./src", "--build.entrypoint", "./tmp/main"]

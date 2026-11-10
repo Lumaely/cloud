@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"cloud/models"
+	"cloud/src/models"
 	"context"
 	"crypto/rand"
 	"database/sql"

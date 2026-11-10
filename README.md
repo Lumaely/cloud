@@ -1,6 +1,6 @@
 # Lumaely Cloud
 
-Go API that stores the end-to-end encrypted Lumaely diary: PostgreSQL for records, MinIO (S3) for files. The API contract is in [docs/API.md](docs/API.md).
+Go API that stores the end-to-end encrypted Lumaely diary: PostgreSQL for records, MinIO (S3) for files. The API contract is in [src/docs/API.md](src/docs/API.md).
 
 ```mermaid
 flowchart LR
@@ -8,6 +8,27 @@ flowchart LR
   API --> DB[(PostgreSQL)]
   API --> S3[(MinIO / S3)]
 ```
+
+## Layout
+
+```
+.github/            CI workflow and issue templates
+src/
+  main.go           entry point: runs app.Run
+  app/              configuration, routes, migrations, server commands
+  handlers/  middleware/  models/  services/
+  db/migrations/    goose SQL migrations, compiled into the binary
+  scripts/          start_dev, build_prod, start_prod, apply_migration
+  test/             integration and script tests (real Postgres and MinIO)
+  docs/API.md       API contract
+Dockerfile          production image
+Dockerfile.dev      dev image with live reload
+docker-compose.yml  production stack
+docker-compose-dev.yml
+go.mod  go.sum  README.md  .env.sample
+```
+
+Unit tests sit next to the code they test, because Go only lets them reach a package's private functions from the same folder. Build the binary with `go build -o main ./src`.
 
 ## Setup
 
@@ -89,9 +110,9 @@ src/scripts/apply_migration --prod                # in the prod stack
 | none | Applies every pending migration. Prints `no migration to apply` when there is none. |
 | `TARGET` | Applies every pending migration up to and including `TARGET`: a file name, a path (only its file name is used) or a version number. |
 | `--status` | Prints one line per migration, `Applied <date> <file>` or `Pending - <file>`. |
-| `--dev` (default) | Runs `go run . migrate` in a one-off `app` container of the dev stack; starts `db` and `s3` if needed. |
+| `--dev` (default) | Runs `go run ./src migrate` in a one-off `app` container of the dev stack; starts `db` and `s3` if needed. |
 | `--prod` | Runs `/main migrate` in a one-off container of the prod image (`LUMAELY_VERSION`, default `latest`). |
-| `--local` | Runs `go run . migrate` on this machine. `DATABASE_URL`, or the `DB_*` values, select the database; `MIGRATIONS_DIR` can replace the built-in migrations. Does not need `.env`. |
+| `--local` | Runs `go run ./src migrate` on this machine. `DATABASE_URL`, or the `DB_*` values, select the database; `MIGRATIONS_DIR` can replace the built-in migrations. Does not need `.env`. |
 
 Exit code 0 on success. Exit code 1 when:
 
@@ -103,7 +124,7 @@ Exit code 2 for an unknown option or two targets.
 
 ## Database migrations
 
-Migrations are SQL files in `db/migrations/`, applied in version order by [goose](https://github.com/pressly/goose) and compiled into the binary.
+Migrations are SQL files in `src/db/migrations/`, applied in version order by [goose](https://github.com/pressly/goose) and compiled into the binary.
 
 ```mermaid
 flowchart LR
@@ -121,7 +142,7 @@ flowchart LR
 
 Rules for a new migration:
 
-1. Create `db/migrations/NNNNN_short_name.sql` with the next 5-digit number.
+1. Create `src/db/migrations/NNNNN_short_name.sql` with the next 5-digit number.
 2. Write `-- +goose Up` with the change, and `-- +goose Down` with its inverse.
 3. Never edit or rename a migration once it is on `main`; fix it with a new one.
 4. Test it with `src/scripts/apply_migration --local` against a test database, then `--dev`.
@@ -160,7 +181,7 @@ The binary takes one command: `serve` (default), `migrate [up | up-to TARGET | s
 go test ./...
 ```
 
-Unit tests always run. Integration tests, including the `apply_migration` script tests, need a disposable Postgres database and MinIO, and erase that database:
+Unit tests always run. Integration tests in `src/test/`, including the `apply_migration` script tests, need a disposable Postgres database and MinIO, and erase that database:
 
 ```bash
 TEST_DATABASE_URL="postgres://USER:PASSWORD@localhost:5432/lumaely_test?sslmode=disable" \

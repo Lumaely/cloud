@@ -1,8 +1,8 @@
-package main
+package app
 
 import (
-	"cloud/handlers"
-	"cloud/services"
+	"cloud/src/handlers"
+	"cloud/src/services"
 	"reflect"
 	"testing"
 )
@@ -129,13 +129,13 @@ func TestGetEnvBool(t *testing.T) {
 }
 
 func TestRunCommands(t *testing.T) {
-	if err := run([]string{"version"}); err != nil {
+	if err := Run([]string{"version"}, "test"); err != nil {
 		t.Errorf("version: %v", err)
 	}
-	if err := run([]string{"pair"}); err == nil {
+	if err := Run([]string{"pair"}, "test"); err == nil {
 		t.Error("pair should report it is not available yet")
 	}
-	if err := run([]string{"nope"}); err == nil {
+	if err := Run([]string{"nope"}, "test"); err == nil {
 		t.Error("unknown command accepted")
 	}
 }

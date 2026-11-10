@@ -1,8 +1,8 @@
-package main
+package app
 
 import (
-	"cloud/handlers"
-	"cloud/services"
+	"cloud/src/handlers"
+	"cloud/src/services"
 	"fmt"
 	"os"
 	"strconv"

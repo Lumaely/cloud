@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"cloud/models"
-	"cloud/services"
+	"cloud/src/models"
+	"cloud/src/services"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"

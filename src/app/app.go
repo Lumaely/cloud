@@ -1,8 +1,9 @@
-package main
+// Package app wires configuration, migrations and HTTP routes into the server commands.
+package app
 
 import (
-	"cloud/handlers"
-	"cloud/services"
+	"cloud/src/handlers"
+	"cloud/src/services"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -16,17 +17,8 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// version is set at build time: -ldflags "-X main.version=1.0.0".
-var version = "dev"
-
-func main() {
-	if err := run(os.Args[1:]); err != nil {
-		log.Fatal(err)
-	}
-}
-
-// run dispatches subcommands; "serve" is the default. "pair" is reserved for self-hosted pairing.
-func run(args []string) error {
+// Run dispatches subcommands; "serve" is the default. "pair" is reserved for self-hosted pairing.
+func Run(args []string, version string) error {
 	cmd := "serve"
 	if len(args) > 0 {
 		cmd = args[0]
@@ -34,7 +26,7 @@ func run(args []string) error {
 	switch cmd {
 	case "serve":
 		_ = godotenv.Load()
-		return serve()
+		return serve(version)
 	case "migrate":
 		_ = godotenv.Load()
 		return migrateCommand(context.Background(), args[1:], os.Stdout)
@@ -48,7 +40,7 @@ func run(args []string) error {
 	}
 }
 
-func serve() error {
+func serve(version string) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -60,7 +52,7 @@ func serve() error {
 	}
 	defer db.Close()
 
-	if err := migrateOnStart(db, cfg.MigrationsDir); err != nil {
+	if err := Migrate(db, cfg.MigrationsDir); err != nil {
 		return fmt.Errorf("database migration failed: %w", err)
 	}
 
@@ -84,7 +76,7 @@ func serve() error {
 		ServerSecret: serverSecret(cfg.ServerSecret),
 	})
 
-	router, err := newRouter(h, db, authService, cfg.TrustedProxies)
+	router, err := NewRouter(h, db, authService, cfg.TrustedProxies)
 	if err != nil {
 		return err
 	}
@@ -102,8 +94,8 @@ func serverSecret(configured string) []byte {
 	return b
 }
 
-// migrateOnStart applies every pending migration before the server accepts requests.
-func migrateOnStart(db *sql.DB, dir string) error {
+// Migrate applies every pending migration; the server calls it before accepting requests.
+func Migrate(db *sql.DB, dir string) error {
 	p, err := newMigrator(db, dir)
 	if err != nil {
 		return err

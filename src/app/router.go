@@ -1,16 +1,16 @@
-package main
+package app
 
 import (
-	"cloud/handlers"
-	"cloud/middleware"
-	"cloud/services"
+	"cloud/src/handlers"
+	"cloud/src/middleware"
+	"cloud/src/services"
 	"database/sql"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-func newRouter(h *handlers.Handler, db *sql.DB, auth *services.AuthService, trustedProxies []string) (*gin.Engine, error) {
+func NewRouter(h *handlers.Handler, db *sql.DB, auth *services.AuthService, trustedProxies []string) (*gin.Engine, error) {
 	r := gin.Default()
 	if err := r.SetTrustedProxies(trustedProxies); err != nil {
 		return nil, err

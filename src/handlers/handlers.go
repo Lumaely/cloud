@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"cloud/services"
+	"cloud/src/services"
 	"database/sql"
 	"net/http"
 

@@ -1,10 +1,12 @@
-package main
+// Package test holds integration tests that run against real Postgres and MinIO.
+package test
 
 import (
 	"bytes"
-	"cloud/handlers"
-	"cloud/models"
-	"cloud/services"
+	"cloud/src/app"
+	"cloud/src/handlers"
+	"cloud/src/models"
+	"cloud/src/services"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -83,7 +85,7 @@ func newStack(t *testing.T, quota int64) *stack {
 	if _, err := db.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"); err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}
-	if err := migrateOnStart(db, ""); err != nil {
+	if err := app.Migrate(db, ""); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -117,7 +119,7 @@ func newStack(t *testing.T, quota int64) *stack {
 	h := handlers.NewHandler(db, &services.MockStripeService{}, auth, storage, mailer, handlers.Settings{
 		Version: "test", Mode: handlers.ModeCloud, StorageQuota: quota, ServerSecret: []byte("test-secret"),
 	})
-	router, err := newRouter(h, db, auth, nil)
+	router, err := app.NewRouter(h, db, auth, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
