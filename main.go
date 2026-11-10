@@ -33,19 +33,22 @@ func run(args []string) error {
 	}
 	switch cmd {
 	case "serve":
+		_ = godotenv.Load()
 		return serve()
+	case "migrate":
+		_ = godotenv.Load()
+		return migrateCommand(context.Background(), args[1:], os.Stdout)
 	case "pair":
 		return errors.New("pairing is not available yet")
 	case "version":
 		fmt.Println(version)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (use serve, pair or version)", cmd)
+		return fmt.Errorf("unknown command %q (use serve, migrate, pair or version)", cmd)
 	}
 }
 
 func serve() error {
-	_ = godotenv.Load()
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -56,6 +59,10 @@ func serve() error {
 		return fmt.Errorf("database connection configuration error: %w", err)
 	}
 	defer db.Close()
+
+	if err := migrateOnStart(db, cfg.MigrationsDir); err != nil {
+		return fmt.Errorf("database migration failed: %w", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	storage, err := services.NewS3Storage(ctx, cfg.S3)
@@ -93,4 +100,19 @@ func serverSecret(configured string) []byte {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return b
+}
+
+// migrateOnStart applies every pending migration before the server accepts requests.
+func migrateOnStart(db *sql.DB, dir string) error {
+	p, err := newMigrator(db, dir)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	results, err := p.Up(ctx)
+	for _, r := range results {
+		log.Printf("migration %s applied", r.Source.Path)
+	}
+	return err
 }

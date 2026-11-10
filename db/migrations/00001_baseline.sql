@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 CREATE TABLE IF NOT EXISTS users (
@@ -136,3 +137,6 @@ CREATE INDEX IF NOT EXISTS idx_bookmark_folders_seq ON bookmark_folders(user_id,
 CREATE INDEX IF NOT EXISTS idx_bookmarks_seq ON bookmarks(user_id, seq);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_entry ON bookmarks(entry_id);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_folder ON bookmarks(folder_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS feedback, bookmarks, bookmark_folders, places, activities, patterns, entry_attachments, mood_entries, user_challenges, user_sessions, users;

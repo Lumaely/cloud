@@ -65,7 +65,7 @@ Returned by register, login, recovery and `GET /users/me/keys`.
 
 Rate limits (per route and client IP, see `TRUSTED_PROXIES`): register, login, login params, recovery and erase routes allow 10 requests per minute, then 429.
 
-The dev database must be recreated after this schema: `docker compose -f docker-compose-dev.yml down -v` erases the dev volumes.
+The server applies pending database migrations at startup; see README.md.
 
 ## Sync model
 

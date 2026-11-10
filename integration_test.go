@@ -63,7 +63,7 @@ type stack struct {
 	mailer *recordingMailer
 }
 
-// Needs TEST_DATABASE_URL and MINIO_TEST_*; recreates the public schema of that database.
+// Needs TEST_DATABASE_URL and MINIO_TEST_*; recreates the public schema of that database, then migrates it.
 func newStack(t *testing.T, quota int64) *stack {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -80,15 +80,11 @@ func newStack(t *testing.T, quota int64) *stack {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	schema, err := os.ReadFile("db/init/01_schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
 	if _, err := db.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"); err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, string(schema)); err != nil {
-		t.Fatalf("apply schema: %v", err)
+	if err := migrateOnStart(db, ""); err != nil {
+		t.Fatalf("migrate: %v", err)
 	}
 
 	cfg := services.S3Config{

@@ -13,6 +13,8 @@ const defaultQuotaBytes = 5 << 30
 
 // Config is the runtime configuration read from the environment.
 type Config struct {
+	DatabaseURL    string
+	MigrationsDir  string
 	DBHost         string
 	DBPort         string
 	DBUser         string
@@ -29,6 +31,8 @@ type Config struct {
 
 func loadConfig() (Config, error) {
 	cfg := Config{
+		DatabaseURL:    os.Getenv("DATABASE_URL"),
+		MigrationsDir:  os.Getenv("MIGRATIONS_DIR"),
 		DBHost:         getEnv("DB_HOST", "localhost"),
 		DBPort:         getEnv("DB_PORT", "5432"),
 		DBUser:         getEnv("DB_USER", "Admin"),
@@ -66,7 +70,11 @@ func loadConfig() (Config, error) {
 	return cfg, nil
 }
 
+// PostgresDSN prefers DATABASE_URL over the DB_* parts.
 func (c Config) PostgresDSN() string {
+	if c.DatabaseURL != "" {
+		return c.DatabaseURL
+	}
 	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		c.DBHost, c.DBPort, c.DBUser, c.DBPassword, c.DBName)
 }
