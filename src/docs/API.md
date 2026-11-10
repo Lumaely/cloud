@@ -169,7 +169,7 @@ Omit `entry_id` to create; set it with `version` to update or delete. Each opera
 ]}
 ```
 
-Statuses: `created`, `updated`, `deleted`, `conflict` (stale `version` or duplicate `sha256_hash`; `entry` is the server copy), `not_found`, `invalid` (includes a preview over 256 KiB or larger than its file), `quota_exceeded`, `error`.
+Statuses: `created`, `updated`, `deleted`, `conflict` (stale `version` or duplicate `sha256_hash`; `entry` is the server copy), `not_found`, `invalid` (includes a preview over 256 KiB, or larger than its file when the account has a quota), `quota_exceeded`, `error`.
 
 ## Files
 
@@ -179,7 +179,7 @@ Statuses: `created`, `updated`, `deleted`, `conflict` (stale `version` or duplic
 | `GET /attachments/{id}/preview` | Preview bytes, 404 when none. |
 | `DELETE /attachments/{id}` | 204. Bumps the entry `version` and `seq`. |
 
-Files count against the account quota (`STORAGE_QUOTA_BYTES`, 5 GiB on Lumaely Cloud, 0 on self-hosted). Previews do not; each is at most 256 KiB and at most the size of its file.
+Files count against the account quota (`STORAGE_QUOTA_BYTES`, 5 GiB on Lumaely Cloud, 0 on self-hosted). Previews do not; each is at most 256 KiB and, when the quota is not 0, at most the size of its file.
 
 ## Other
 

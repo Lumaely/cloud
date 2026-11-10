@@ -327,3 +327,16 @@ func TestIntegrationSignInNeverPrunesItsOwnSession(t *testing.T) {
 
 	expect(t, s.do(http.MethodGet, "/users/me", token, nil), http.StatusOK)
 }
+
+func TestIntegrationPreviewLargerThanFileAllowedWithoutQuota(t *testing.T) {
+	s := newStack(t, 0)
+	a := s.register("noquota@test.local")
+	larger := file{name: "larger", mediaType: "image/png", content: "1", preview: "22"}
+	if res := s.push(a.token, []map[string]any{newEntry("l", "n1", larger)}, larger); res[0].Status != "created" {
+		t.Errorf("preview larger than its file without quota = %+v", res[0])
+	}
+	over := file{name: "over", mediaType: "image/png", content: "1", preview: strings.Repeat("p", 256<<10+1)}
+	if res := s.push(a.token, []map[string]any{newEntry("o", "n2", over)}, over); res[0].Status != "invalid" {
+		t.Errorf("preview over 256 KiB without quota = %+v", res[0])
+	}
+}

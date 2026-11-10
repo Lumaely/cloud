@@ -176,7 +176,7 @@ Set in `.env` (see `.env.sample`). Compose sets `DB_HOST`, `DB_PORT` and `MINIO_
 | `MINIO_ENDPOINT`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `MINIO_BUCKET`, `MINIO_REGION`, `MINIO_USE_SSL` | `localhost:9000`, `minioadmin`, `minioadmin`, `journal-attachments`, `us-east-1`, `false` | S3 storage. |
 | `SERVER_MODE` | `cloud` | `cloud` or `self-hosted` (no email routes, no quota). |
 | `SERVER_SECRET` | random per start | Keeps fake login salts stable; required in production. |
-| `STORAGE_QUOTA_BYTES` | 5 GiB in cloud mode, 0 (unlimited) in self-hosted | Per-account file quota. Previews are not counted; each is at most 256 KiB and at most the size of its file. |
+| `STORAGE_QUOTA_BYTES` | 5 GiB in cloud mode, 0 (unlimited) in self-hosted | Per-account file quota. Previews are not counted; each is at most 256 KiB and, when the quota is not 0, at most the size of its file. |
 | `MAIL_DRIVER`, `MAIL_FROM` | `log`, `Lumaely <no-reply@lumaely.app>` | Email sending; `log` writes emails to the server log. |
 | `TRUSTED_PROXIES` | none | Proxy IPs/CIDRs, so rate limits see client IPs. |
 | `MIGRATIONS_DIR` | empty (built-in) | Folder of migrations to use instead of the built-in ones. Host only (`--local`, tests): Compose blanks it in containers. |
