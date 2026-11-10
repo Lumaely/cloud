@@ -276,3 +276,37 @@ func TestIntegrationURNUUIDsAccepted(t *testing.T) {
 	expect(t, s.do(http.MethodDelete, "/attachments/"+urn(entry.Attachments[0].AttachmentID), a.token, nil), http.StatusNoContent)
 	expect(t, s.do(http.MethodDelete, "/patterns/"+urn(rec.ID), a.token, nil), http.StatusNoContent)
 }
+
+func TestIntegrationSignInPrunesExpiredAndStalestSessions(t *testing.T) {
+	s := newStack(t, 0)
+	a := s.register("cap@test.local")
+	_, err := s.db.Exec(`
+		INSERT INTO user_sessions (user_id, token_hash, expires_at, last_seen_at, device_name)
+		SELECT $1, md5(i::text), NOW() + INTERVAL '1 day', NOW() - i * INTERVAL '1 minute', 'seed-' || i
+		FROM generate_series(1, 50) AS i
+	`, a.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO user_sessions (user_id, token_hash, expires_at) VALUES ($1, 'expired', NOW() - INTERVAL '1 minute')`, a.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	token := s.loginOn(a, "New", "ios")
+
+	var rows, expired int
+	var stalest string
+	err = s.db.QueryRow(`
+		SELECT count(*), count(*) FILTER (WHERE expires_at <= NOW()),
+			(SELECT device_name FROM user_sessions WHERE user_id = $1 ORDER BY last_seen_at ASC LIMIT 1)
+		FROM user_sessions WHERE user_id = $1
+	`, a.userID).Scan(&rows, &expired, &stalest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows != 50 || expired != 0 || stalest != "seed-48" {
+		t.Errorf("rows=%d expired=%d stalest=%q, want 50, 0, seed-48", rows, expired, stalest)
+	}
+	expect(t, s.do(http.MethodGet, "/users/me", token, nil), http.StatusOK)
+	expect(t, s.do(http.MethodGet, "/users/me", a.token, nil), http.StatusOK)
+}

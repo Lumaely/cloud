@@ -87,6 +87,8 @@ Register, login, recovery finish and erase confirm each open one session. `devic
 
 `last_seen_at` is refreshed by any authenticated request, at most once every 5 minutes per session.
 
+An account keeps at most 50 live sessions. Each new session deletes expired ones and signs out the least recently seen beyond 50.
+
 Rate limits (per route and client IP, see `TRUSTED_PROXIES`): register, login, login params, recovery and erase routes allow 10 requests per minute, then 429.
 
 The server applies pending database migrations at startup; see README.md.

@@ -26,6 +26,7 @@ import (
 
 const (
 	sessionTTL         = 60 * 24 * time.Hour
+	maxSessionsPerUser = 50
 	challengeTTL       = 15 * time.Minute
 	maxEraseAttempts   = 5
 	challengeRecovery  = "recovery"
@@ -74,7 +75,24 @@ func (h *Handler) createSession(ctx context.Context, q queryer, userID string, d
 	if err != nil {
 		return "", err
 	}
+	if err := pruneSessions(ctx, q, userID); err != nil {
+		return "", err
+	}
 	return rawToken, nil
+}
+
+// pruneSessions drops expired sessions and signs out the least recently seen beyond maxSessionsPerUser.
+func pruneSessions(ctx context.Context, q queryer, userID string) error {
+	_, err := q.ExecContext(ctx, `
+		DELETE FROM user_sessions
+		WHERE user_id = $1 AND (expires_at <= NOW() OR session_id IN (
+			SELECT session_id FROM user_sessions
+			WHERE user_id = $1 AND expires_at > NOW()
+			ORDER BY last_seen_at DESC, created_at DESC
+			OFFSET $2
+		))
+	`, userID, maxSessionsPerUser)
+	return err
 }
 
 func scanUser(row interface{ Scan(...any) error }, u *models.User, extra ...any) error {
