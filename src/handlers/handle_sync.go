@@ -21,7 +21,7 @@ import (
 const (
 	maxOperations         = 100
 	maxAttachmentsPerItem = 10
-	maxPreviewBytes       = 512 * 1024
+	maxPreviewBytes       = 256 * 1024
 	entryColumns          = `entry_id, mood_scale, metadata_blob, entry_timestamp, sha256_hash, version, seq, updated_at, deleted_at`
 
 	statusCreated       = "created"

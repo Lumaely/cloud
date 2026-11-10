@@ -227,11 +227,11 @@ func TestIntegrationPreviewsOutsideQuota(t *testing.T) {
 		t.Errorf("used = %d, want 5", usage.UsedBytes)
 	}
 
-	max := file{name: "max", mediaType: "image/png", content: "1", preview: strings.Repeat("p", 512<<10)}
+	max := file{name: "max", mediaType: "image/png", content: "1", preview: strings.Repeat("p", 256<<10)}
 	if res := s.push(a.token, []map[string]any{newEntry("m", "p2", max)}, max); res[0].Status != "created" {
-		t.Errorf("512 KiB preview = %+v", res[0])
+		t.Errorf("256 KiB preview = %+v", res[0])
 	}
-	over := file{name: "over", mediaType: "image/png", content: "1", preview: strings.Repeat("p", 512<<10+1)}
+	over := file{name: "over", mediaType: "image/png", content: "1", preview: strings.Repeat("p", 256<<10+1)}
 	res := s.push(a.token, []map[string]any{newEntry("o", "p3", over)}, over)
 	if res[0].Status != "invalid" {
 		t.Errorf("oversized preview = %+v", res[0])
