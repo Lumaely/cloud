@@ -5,7 +5,6 @@ import (
 	"cloud/src/models"
 	"encoding/json"
 	"errors"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -94,18 +93,13 @@ func TestValidateKeyMaterial(t *testing.T) {
 }
 
 func TestValidateRecoveryMaterial(t *testing.T) {
-	valid := models.RecoveryMaterial{
-		RecoveryAuthKey:      make([]byte, keyLength),
-		WrappedKeyRecovery:   []byte("w"),
-		EncryptedRecoveryKey: []byte("e"),
-	}
+	valid := models.RecoveryMaterial{RecoveryAuthKey: make([]byte, keyLength), WrappedKeyRecovery: []byte("w")}
 	if err := validateRecoveryMaterial(valid); err != nil {
 		t.Fatalf("valid material rejected: %v", err)
 	}
 	for name, r := range map[string]models.RecoveryMaterial{
-		"short auth key":  {RecoveryAuthKey: []byte{1}, WrappedKeyRecovery: []byte("w"), EncryptedRecoveryKey: []byte("e")},
-		"missing wrapped": {RecoveryAuthKey: make([]byte, keyLength), EncryptedRecoveryKey: []byte("e")},
-		"missing copy":    {RecoveryAuthKey: make([]byte, keyLength), WrappedKeyRecovery: []byte("w")},
+		"short auth key":  {RecoveryAuthKey: []byte{1}, WrappedKeyRecovery: []byte("w")},
+		"missing wrapped": {RecoveryAuthKey: make([]byte, keyLength)},
 	} {
 		if validateRecoveryMaterial(r) == nil {
 			t.Errorf("%s accepted", name)
@@ -164,75 +158,58 @@ func TestNewObjectKey(t *testing.T) {
 	}
 }
 
-func TestNonNil(t *testing.T) {
-	if nonNil(nil) == nil || string(nonNil([]byte("x"))) != "x" {
-		t.Error("nonNil")
-	}
-}
-
-func multipartFiles(t *testing.T, names ...string) map[string][]*multipart.FileHeader {
-	t.Helper()
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	for _, n := range names {
-		fw, _ := mw.CreateFormFile(n, n)
-		fw.Write([]byte("12345"))
-	}
-	mw.Close()
-	form, err := multipart.NewReader(&buf, mw.Boundary()).ReadForm(1 << 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return form.File
-}
-
-func TestValidateOperation(t *testing.T) {
-	files := multipartFiles(t, "f1", "p1")
-	valid := func() models.EntryOperation {
-		return models.EntryOperation{
-			EntryTimestamp: "2026-11-09T10:00:00Z",
-			SHA256Hash:     "h",
-			Attachments: []models.AttachmentOperation{
-				{File: "f1", Preview: "p1", EncryptedAESKey: []byte("k")},
-			},
+func TestValidRecordID(t *testing.T) {
+	hex64 := strings.Repeat("0123456789abcdef", 4)
+	for _, id := range []string{hex64, "01890a5d-ac96-774b-bcce-b302099a8057"} {
+		if !validRecordID(id) {
+			t.Errorf("%q rejected", id)
 		}
 	}
-
-	pending, _, err := validateOperation(valid(), files)
-	if err != nil {
-		t.Fatalf("valid operation rejected: %v", err)
+	for _, id := range []string{
+		"", "2026-10-29", strings.ToUpper(hex64), hex64[:63], hex64 + "0", "g" + hex64[1:],
+		"01890A5D-AC96-774B-BCCE-B302099A8057", "urn:uuid:01890a5d-ac96-774b-bcce-b302099a8057",
+		"{01890a5d-ac96-774b-bcce-b302099a8057}", "01890a5dac96774bbcceb302099a8057",
+		"01890a5d-ac96-474b-bcce-b302099a8057", "01890a5d-ac96-774b-7cce-b302099a8057",
+	} {
+		if validRecordID(id) {
+			t.Errorf("%q accepted", id)
+		}
 	}
-	if len(pending) != 1 || pending[0].header.Size != 5 || pending[0].previewSize() != 5 || pending[0].mediaType != "application/octet-stream" {
-		t.Errorf("pending = %+v", pending)
+}
+
+func TestValidateChange(t *testing.T) {
+	valid := func() models.Change {
+		return models.Change{Collection: "entries", ID: strings.Repeat("ab", 32), Blob: []byte("b")}
+	}
+	if err := validateChange(valid()); err != nil {
+		t.Fatalf("valid change rejected: %v", err)
+	}
+	del := models.Change{Collection: "patterns", ID: "01890a5d-ac96-774b-bcce-b302099a8057", Version: 2, Deleted: true}
+	if err := validateChange(del); err != nil {
+		t.Fatalf("valid delete rejected: %v", err)
 	}
 
-	cases := map[string]func(*models.EntryOperation){
-		"bad entry_id":       func(op *models.EntryOperation) { op.EntryID = "x" },
-		"update w/o version": func(op *models.EntryOperation) { op.EntryID = "22222222-2222-2222-2222-222222222222" },
-		"bad timestamp":      func(op *models.EntryOperation) { op.EntryTimestamp = "today" },
-		"missing hash":       func(op *models.EntryOperation) { op.SHA256Hash = "" },
-		"missing file part":  func(op *models.EntryOperation) { op.Attachments[0].File = "nope" },
-		"missing preview":    func(op *models.EntryOperation) { op.Attachments[0].Preview = "nope" },
-		"missing aes key":    func(op *models.EntryOperation) { op.Attachments[0].EncryptedAESKey = nil },
-		"more than 10 files": func(op *models.EntryOperation) { op.Attachments = make([]models.AttachmentOperation, 11) },
+	cases := map[string]func(*models.Change){
+		"unknown collection": func(c *models.Change) { c.Collection = "moods" },
+		"bad id":             func(c *models.Change) { c.ID = "x" },
+		"negative version":   func(c *models.Change) { c.Version = -1 },
+		"empty blob":         func(c *models.Change) { c.Blob = nil },
+		"blob too large":     func(c *models.Change) { c.Blob = make([]byte, maxBlobBytes+1) },
+		"delete version 0":   func(c *models.Change) { c.Deleted = true },
+		"delete with blob":   func(c *models.Change) { c.Deleted, c.Version = true, 1 },
 	}
 	for name, mutate := range cases {
-		op := valid()
-		mutate(&op)
-		_, _, err := validateOperation(op, files)
+		c := valid()
+		mutate(&c)
 		var oe *opError
-		if !errors.As(err, &oe) || oe.status != statusInvalid {
+		if err := validateChange(c); !errors.As(err, &oe) || oe.status != statusInvalid {
 			t.Errorf("%s: err = %v, want invalid", name, err)
 		}
 	}
 }
 
-func TestResourcesDeclareRoutes(t *testing.T) {
-	var paths []string
-	for _, r := range Resources() {
-		paths = append(paths, r.Path)
-	}
-	if got := strings.Join(paths, ","); got != "patterns,activities,places,bookmark-folders,bookmarks" {
-		t.Errorf("resources = %s", got)
+func TestCollectionsDeclareRoutes(t *testing.T) {
+	if got := strings.Join(Collections, ","); got != "entries,patterns,activities,places,bookmark-folders,bookmarks" {
+		t.Errorf("collections = %s", got)
 	}
 }

@@ -1,6 +1,6 @@
 # Lumaely Cloud
 
-Go API that stores the end-to-end encrypted Lumaely diary: PostgreSQL for records, MinIO (S3) for files. The API contract is in [src/docs/API.md](src/docs/API.md).
+Go API that stores the end-to-end encrypted Lumaely diary: PostgreSQL for records, MinIO (S3) for files. The API contract is in [src/docs/API.md](src/docs/API.md), with an OpenAPI copy in [src/docs/openapi.yaml](src/docs/openapi.yaml) for generating clients.
 
 ```mermaid
 flowchart LR
@@ -20,7 +20,7 @@ src/
   db/migrations/    goose SQL migrations, compiled into the binary
   scripts/          start_dev, build_prod, start_prod, apply_migration
   test/             integration and script tests (real Postgres and MinIO)
-  docs/API.md       API contract
+  docs/             API contract: API.md, openapi.yaml
 Dockerfile          production image
 Dockerfile.dev      dev image with live reload
 docker-compose.yml  production stack
@@ -45,7 +45,7 @@ Upgrading a checkout that still runs the `cloud` Compose project (containers and
 1. Stop its containers: `docker compose -f docker-compose-dev.yml -p cloud down`.
 2. To keep that data, copy the `cloud_postgres_data` and `cloud_minio_data` volumes into `lumaely_postgres_data` and `lumaely_minio_data` before the first `start_prod`.
 3. Recreate a dev database whose schema came from `db/init/01_schema.sql`: `docker compose -f docker-compose-dev.yml down -v`. goose would otherwise mark it as migration 1 whatever its tables are.
-4. Recreate the same way a dev database migrated before the last edit of `00001_baseline.sql` (it lacks `user_sessions.last_seen_at`). goose sees migration 1 as applied and prints `no migration to apply`; sign-in and every authenticated route then return 500.
+4. Recreate the same way a dev database migrated before the current `00001_baseline.sql` (it lacks the `records` and `attachments` tables). goose sees migration 1 as applied and prints `no migration to apply`; sign-in, sync and file routes then return 500.
 
 ## Scripts
 

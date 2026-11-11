@@ -208,13 +208,12 @@ func TestApplyMigrationScriptAppliesEmbeddedBaseline(t *testing.T) {
 	}
 	var tables int
 	err = e.db.QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN
-		('users', 'user_sessions', 'user_challenges', 'mood_entries', 'entry_attachments', 'patterns',
-		 'activities', 'places', 'bookmark_folders', 'bookmarks', 'feedback')`).Scan(&tables)
+		('users', 'user_sessions', 'user_challenges', 'records', 'attachments', 'feedback')`).Scan(&tables)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tables != 11 {
-		t.Errorf("baseline created %d of 11 tables", tables)
+	if tables != 6 {
+		t.Errorf("baseline created %d of 6 tables", tables)
 	}
 
 	out, err = e.run()

@@ -33,7 +33,7 @@ const (
 	challengeErase     = "erase"
 	defaultKDFParams   = `{"alg":"argon2id","m":65536,"t":3,"p":1}`
 	userColumns        = `user_id, email, diary_epoch, created_at`
-	keyBundleColumns   = `kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery, encrypted_recovery_key`
+	keyBundleColumns   = `kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery`
 	errInvalidLogin    = "Invalid email or password"
 	errInvalidRecovery = "Invalid email or recovery key"
 )
@@ -105,7 +105,7 @@ func loadAccount(ctx context.Context, q queryer, userID string) (models.User, mo
 	var u models.User
 	var k models.KeyBundle
 	row := q.QueryRowContext(ctx, `SELECT `+userColumns+`, `+keyBundleColumns+` FROM users WHERE user_id = $1`, userID)
-	err := scanUser(row, &u, &k.KDFSalt, &k.KDFParams, &k.WrappedKeyPassword, &k.WrappedKeyRecovery, &k.EncryptedRecoveryKey)
+	err := scanUser(row, &u, &k.KDFSalt, &k.KDFParams, &k.WrappedKeyPassword, &k.WrappedKeyRecovery)
 	return u, k, err
 }
 
@@ -151,12 +151,6 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		serverError(c, "Failed to hash key")
 		return
 	}
-	stripeID, err := h.Payment.CreateCustomer(email, "")
-	if err != nil {
-		serverError(c, "Failed to create payment profile")
-		return
-	}
-
 	ctx := c.Request.Context()
 	tx, err := h.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -168,11 +162,11 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 	var userID string
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO users (email, auth_hash, recovery_auth_hash, kdf_salt, kdf_params,
-			wrapped_key_password, wrapped_key_recovery, encrypted_recovery_key, stripe_customer_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			wrapped_key_password, wrapped_key_recovery)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING user_id
 	`, email, authHash, recoveryHash, req.KDFSalt, []byte(req.KDFParams),
-		req.WrappedKeyPassword, req.WrappedKeyRecovery, req.EncryptedRecoveryKey, stripeID).Scan(&userID)
+		req.WrappedKeyPassword, req.WrappedKeyRecovery).Scan(&userID)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -350,9 +344,9 @@ func (h *Handler) setRecoveryKeys(ctx context.Context, q queryer, userID string,
 		return err
 	}
 	_, err = q.ExecContext(ctx, `
-		UPDATE users SET recovery_auth_hash = $2, wrapped_key_recovery = $3, encrypted_recovery_key = $4
+		UPDATE users SET recovery_auth_hash = $2, wrapped_key_recovery = $3
 		WHERE user_id = $1
-	`, userID, recoveryHash, r.WrappedKeyRecovery, r.EncryptedRecoveryKey)
+	`, userID, recoveryHash, r.WrappedKeyRecovery)
 	return err
 }
 
@@ -515,6 +509,10 @@ func (h *Handler) DeleteUserProfile(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
+	// Second sweep: an upload committed between the first sweep and the delete lost its row in the cascade.
+	if err := h.Storage.DeletePrefix(context.WithoutCancel(c.Request.Context()), userID+"/"); err != nil {
+		log.Printf("objects of deleted user %s not swept: %v", userID, err)
+	}
 	c.Status(http.StatusNoContent)
 }
 
@@ -529,12 +527,7 @@ func (h *Handler) GetStorage(c *gin.Context) {
 
 func storageUsed(ctx context.Context, q queryer, userID string) (int64, error) {
 	var used int64
-	err := q.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(a.size_bytes), 0)
-		FROM entry_attachments a
-		JOIN mood_entries e ON e.entry_id = a.entry_id
-		WHERE e.user_id = $1
-	`, userID).Scan(&used)
+	err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(size_bytes), 0) FROM attachments WHERE user_id = $1`, userID).Scan(&used)
 	return used, err
 }
 
@@ -554,7 +547,8 @@ func (h *Handler) ResetDiary(c *gin.Context) {
 	}
 	defer tx.Rollback()
 
-	if err := eraseDiaryRows(ctx, tx, userID); err != nil {
+	keys, err := eraseDiaryRows(ctx, tx, userID)
+	if err != nil {
 		serverError(c, "Database error")
 		return
 	}
@@ -562,21 +556,43 @@ func (h *Handler) ResetDiary(c *gin.Context) {
 		serverError(c, "Transaction commit failed")
 		return
 	}
+	h.deleteObjects(keys)
 	c.Status(http.StatusNoContent)
 }
 
 // eraseDiaryRows deletes every diary row and bumps diary_epoch so other devices drop their copy.
-func eraseDiaryRows(ctx context.Context, tx *sql.Tx, userID string) error {
+// It returns the object keys of the deleted files: the caller deletes them after commit, which catches
+// files uploaded after its earlier prefix sweep.
+func eraseDiaryRows(ctx context.Context, tx *sql.Tx, userID string) ([]string, error) {
 	if _, err := nextSeq(ctx, tx, userID); err != nil {
-		return err
+		return nil, err
 	}
-	for _, table := range []string{"bookmarks", "bookmark_folders", "patterns", "activities", "places", "mood_entries"} {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE user_id = $1`, userID); err != nil {
-			return err
+	if _, err := tx.ExecContext(ctx, `DELETE FROM records WHERE user_id = $1`, userID); err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `DELETE FROM attachments WHERE user_id = $1 RETURNING s3_object_key, preview_object_key`, userID)
+	if err != nil {
+		return nil, err
+	}
+	var keys []string
+	for rows.Next() {
+		var key string
+		var preview sql.NullString
+		if err := rows.Scan(&key, &preview); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		keys = append(keys, key)
+		if preview.Valid {
+			keys = append(keys, preview.String)
 		}
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE users SET diary_epoch = diary_epoch + 1 WHERE user_id = $1`, userID)
-	return err
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE users SET diary_epoch = diary_epoch + 1 WHERE user_id = $1`, userID)
+	return keys, err
 }
 
 func (h *Handler) EraseRequest(c *gin.Context) {
@@ -671,8 +687,13 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 	}
 	defer tx.Rollback()
 
+	var erasedKeys []string
 	steps := []func() error{
-		func() error { return eraseDiaryRows(ctx, tx, userID) },
+		func() error {
+			var err error
+			erasedKeys, err = eraseDiaryRows(ctx, tx, userID)
+			return err
+		},
 		func() error { return setPasswordKeys(ctx, tx, userID, authHash, req.KeyMaterial) },
 		func() error { return h.setRecoveryKeys(ctx, tx, userID, req.RecoveryMaterial) },
 		func() error {
@@ -691,6 +712,9 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 		}
 	}
 	h.respondWithSession(c, tx, userID, req.Device, http.StatusOK)
+	if c.Writer.Status() == http.StatusOK {
+		h.deleteObjects(erasedKeys)
+	}
 }
 
 // countFailedAttempt burns the code after maxEraseAttempts wrong guesses.

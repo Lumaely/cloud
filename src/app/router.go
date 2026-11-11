@@ -46,19 +46,19 @@ func NewRouter(h *handlers.Handler, db *sql.DB, auth *services.AuthService, trus
 		protected.DELETE("/users/me/diary", h.ResetDiary)
 		protected.GET("/users/me/storage", h.GetStorage)
 
-		protected.GET("/sync", h.FetchDelta)
-		protected.POST("/sync", h.PushChanges)
-
-		protected.GET("/attachments/:attachment_id", h.DownloadAttachment)
-		protected.GET("/attachments/:attachment_id/preview", h.DownloadAttachmentPreview)
-		protected.DELETE("/attachments/:attachment_id", h.DeleteAttachment)
-
-		for _, res := range handlers.Resources() {
-			protected.GET("/"+res.Path, h.ListResource(res))
-			protected.POST("/"+res.Path, h.CreateResource(res))
-			protected.PUT("/"+res.Path+"/:id", h.UpdateResource(res))
-			protected.DELETE("/"+res.Path+"/:id", h.DeleteResource(res))
+		protected.GET("/changes", h.ListChanges)
+		protected.POST("/changes", h.PushChanges)
+		for _, col := range handlers.Collections {
+			protected.PUT("/"+col+"/:id", h.PutRecord(col))
+			protected.DELETE("/"+col+"/:id", h.DeleteRecord(col))
 		}
+
+		protected.GET("/attachments", h.ListAttachments)
+		protected.PUT("/attachments/:attachment_id", h.UploadAttachment)
+		protected.GET("/attachments/:attachment_id", h.DownloadAttachment)
+		protected.DELETE("/attachments/:attachment_id", h.DeleteAttachment)
+		protected.PUT("/attachments/:attachment_id/preview", h.UploadPreview)
+		protected.GET("/attachments/:attachment_id/preview", h.DownloadAttachmentPreview)
 	}
 
 	return r, nil

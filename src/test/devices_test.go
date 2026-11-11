@@ -213,57 +213,10 @@ func TestIntegrationSignOutOneDevice(t *testing.T) {
 	expect(t, s.do(http.MethodGet, "/users/me", a.token, nil), http.StatusUnauthorized)
 }
 
-func TestIntegrationPreviewsOutsideQuota(t *testing.T) {
-	const capBytes = 256 << 10
-	s := newStack(t, capBytes+5)
-	a := s.register("prev@test.local")
-
-	pic := file{name: "pic", mediaType: "image/png", content: "12345", preview: "pppp"}
-	entry := s.createEntry(a.token, "p1", pic)
-	if att := entry.Attachments[0]; att.SizeBytes != 5 || att.PreviewSizeBytes != 4 {
-		t.Errorf("attachment = %+v", att)
-	}
-	larger := file{name: "larger", mediaType: "image/png", content: "1", preview: "22"}
-	if res := s.push(a.token, []map[string]any{newEntry("l", "p4", larger)}, larger); res[0].Status != "invalid" {
-		t.Errorf("preview larger than its file = %+v", res[0])
-	}
-
-	max := file{name: "max", mediaType: "image/png", content: strings.Repeat("f", capBytes), preview: strings.Repeat("p", capBytes)}
-	if res := s.push(a.token, []map[string]any{newEntry("m", "p2", max)}, max); res[0].Status != "created" {
-		t.Errorf("256 KiB preview = %+v", res[0])
-	}
-	usage := decode[models.StorageUsage](t, s.do(http.MethodGet, "/users/me/storage", a.token, nil))
-	if usage.UsedBytes != capBytes+5 {
-		t.Errorf("used = %d, want %d", usage.UsedBytes, capBytes+5)
-	}
-
-	over := file{name: "over", mediaType: "image/png", content: strings.Repeat("f", capBytes+1), preview: strings.Repeat("p", capBytes+1)}
-	if res := s.push(a.token, []map[string]any{newEntry("o", "p3", over)}, over); res[0].Status != "invalid" {
-		t.Errorf("preview over 256 KiB = %+v", res[0])
-	}
-	if keys := s.objectKeys(a.userID + "/"); len(keys) != 4 {
-		t.Errorf("objects = %v, want 4", keys)
-	}
-}
-
-func TestIntegrationURNUUIDsAccepted(t *testing.T) {
+func TestIntegrationURNSessionIDAccepted(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("urn@test.local")
 	other := s.loginOn(a, "Other", "ios")
-	urn := func(id string) string { return "urn:uuid:" + id }
-
-	entry := s.createEntry(a.token, "u1", file{name: "f", mediaType: "image/png", content: "x"})
-	expect(t, s.do(http.MethodGet, "/attachments/"+urn(entry.Attachments[0].AttachmentID), a.token, nil), http.StatusOK)
-
-	rec := decode[models.Record](t, s.do(http.MethodPost, "/patterns", a.token, map[string]any{"blob": []byte("p")}))
-	expect(t, s.do(http.MethodPut, "/patterns/"+urn(rec.ID), a.token, map[string]any{"blob": []byte("q"), "version": 1}), http.StatusOK)
-	expect(t, s.do(http.MethodPost, "/bookmarks", a.token, map[string]any{"blob": []byte("b"), "entry_id": urn(entry.EntryID)}), http.StatusCreated)
-
-	update := newEntry("u", "u2")
-	update["entry_id"], update["version"] = urn(entry.EntryID), entry.Version
-	if res := s.push(a.token, []map[string]any{update}); res[0].Status != "updated" {
-		t.Errorf("sync update by urn = %+v", res[0])
-	}
 
 	var otherID string
 	for _, v := range s.sessions(a.token) {
@@ -271,10 +224,8 @@ func TestIntegrationURNUUIDsAccepted(t *testing.T) {
 			otherID = v.SessionID
 		}
 	}
-	expect(t, s.do(http.MethodDelete, "/users/me/sessions/"+urn(otherID), a.token, nil), http.StatusNoContent)
+	expect(t, s.do(http.MethodDelete, "/users/me/sessions/urn:uuid:"+otherID, a.token, nil), http.StatusNoContent)
 	expect(t, s.do(http.MethodGet, "/users/me", other, nil), http.StatusUnauthorized)
-	expect(t, s.do(http.MethodDelete, "/attachments/"+urn(entry.Attachments[0].AttachmentID), a.token, nil), http.StatusNoContent)
-	expect(t, s.do(http.MethodDelete, "/patterns/"+urn(rec.ID), a.token, nil), http.StatusNoContent)
 }
 
 func TestIntegrationSignInPrunesExpiredAndStalestSessions(t *testing.T) {
@@ -326,17 +277,4 @@ func TestIntegrationSignInNeverPrunesItsOwnSession(t *testing.T) {
 	token := s.loginOn(a, "New", "ios")
 
 	expect(t, s.do(http.MethodGet, "/users/me", token, nil), http.StatusOK)
-}
-
-func TestIntegrationPreviewLargerThanFileAllowedWithoutQuota(t *testing.T) {
-	s := newStack(t, 0)
-	a := s.register("noquota@test.local")
-	larger := file{name: "larger", mediaType: "image/png", content: "1", preview: "22"}
-	if res := s.push(a.token, []map[string]any{newEntry("l", "n1", larger)}, larger); res[0].Status != "created" {
-		t.Errorf("preview larger than its file without quota = %+v", res[0])
-	}
-	over := file{name: "over", mediaType: "image/png", content: "1", preview: strings.Repeat("p", 256<<10+1)}
-	if res := s.push(a.token, []map[string]any{newEntry("o", "n2", over)}, over); res[0].Status != "invalid" {
-		t.Errorf("preview over 256 KiB without quota = %+v", res[0])
-	}
 }

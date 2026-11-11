@@ -1,0 +1,677 @@
+openapi: 3.1.0
+info:
+  title: Lumaely Cloud API
+  version: 1.0.0-alpha
+  description: >-
+    Zero-knowledge sync server for the Lumaely diary. Rules and the shared encryption
+    conventions are in src/docs/API.md. Binary fields are base64 strings.
+servers:
+  - url: http://localhost:8080
+security:
+  - bearer: []
+
+paths:
+  /health:
+    get:
+      operationId: health
+      security: []
+      responses:
+        "200":
+          description: Server is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, version, mode]
+                properties:
+                  status: { type: string, const: ok }
+                  version: { type: string }
+                  mode: { type: string, enum: [cloud, self-hosted] }
+
+  /feedback:
+    post:
+      operationId: sendFeedback
+      description: Optional bearer token links the feedback to the account. 10 per minute per IP.
+      security: [{}, { bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string, maxLength: 5000 }
+                contact_email: { type: string, format: email }
+                app_version: { type: string, maxLength: 64 }
+                platform: { type: string, maxLength: 64 }
+      responses:
+        "201": { description: Stored. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /users/register:
+    post:
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/KeyMaterial"
+                - $ref: "#/components/schemas/RecoveryMaterial"
+                - type: object
+                  required: [email, auth_key]
+                  properties:
+                    email: { type: string, format: email }
+                    auth_key: { $ref: "#/components/schemas/Key32" }
+                    device: { $ref: "#/components/schemas/Device" }
+      responses:
+        "201": { $ref: "#/components/responses/Auth" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /users/login/params:
+    post:
+      operationId: loginParams
+      description: Unknown emails get a stable fake salt.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: KDF parameters of the account.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [kdf_salt, kdf_params]
+                properties:
+                  kdf_salt: { type: string, format: byte }
+                  kdf_params: { $ref: "#/components/schemas/KDFParams" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /users/login:
+    post:
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, auth_key]
+              properties:
+                email: { type: string, format: email }
+                auth_key: { $ref: "#/components/schemas/Key32" }
+                device: { $ref: "#/components/schemas/Device" }
+      responses:
+        "200": { $ref: "#/components/responses/Auth" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /users/recover/start:
+    post:
+      operationId: recoverStart
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, recovery_auth_key]
+              properties:
+                email: { type: string, format: email }
+                recovery_auth_key: { $ref: "#/components/schemas/Key32" }
+      responses:
+        "200":
+          description: Recovery token, valid 15 minutes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recovery_token, wrapped_key_recovery]
+                properties:
+                  recovery_token: { type: string }
+                  wrapped_key_recovery: { type: string, format: byte }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /users/recover/finish:
+    post:
+      operationId: recoverFinish
+      description: Sets a new password and signs out every other device.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/KeyMaterial"
+                - type: object
+                  required: [recovery_token, auth_key]
+                  properties:
+                    recovery_token: { type: string }
+                    auth_key: { $ref: "#/components/schemas/Key32" }
+                    device: { $ref: "#/components/schemas/Device" }
+      responses:
+        "200": { $ref: "#/components/responses/Auth" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /users/erase/request:
+    post:
+      operationId: eraseRequest
+      description: Cloud mode only. Always 202; emails a 6-digit code valid 15 minutes when the account exists.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202": { description: Accepted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /users/erase/confirm:
+    post:
+      operationId: eraseConfirm
+      description: Cloud mode only. Erases the diary, replaces the keys, signs out every device. 5 wrong codes burn the code.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/KeyMaterial"
+                - $ref: "#/components/schemas/RecoveryMaterial"
+                - type: object
+                  required: [email, code, auth_key]
+                  properties:
+                    email: { type: string, format: email }
+                    code: { type: string }
+                    auth_key: { $ref: "#/components/schemas/Key32" }
+                    device: { $ref: "#/components/schemas/Device" }
+      responses:
+        "200": { $ref: "#/components/responses/Auth" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /users/me:
+    get:
+      operationId: getMe
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteMe
+      description: Deletes the account and its files.
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /users/me/keys:
+    get:
+      operationId: getKeys
+      responses:
+        "200":
+          description: Key bundle.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KeyBundle" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /users/me/password:
+    put:
+      operationId: changePassword
+      description: With recovery, also replaces the recovery key; this is how the app issues a new one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/KeyMaterial"
+                - type: object
+                  required: [current_auth_key, auth_key]
+                  properties:
+                    current_auth_key: { $ref: "#/components/schemas/Key32" }
+                    auth_key: { $ref: "#/components/schemas/Key32" }
+                    recovery: { $ref: "#/components/schemas/RecoveryMaterial" }
+                    sign_out_other_devices: { type: boolean }
+      responses:
+        "204": { description: Changed. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /users/me/sessions:
+    get:
+      operationId: listSessions
+      responses:
+        "200":
+          description: Live sessions, most recently seen first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: signOutAllDevices
+      description: Signs out every device, this one included.
+      responses:
+        "204": { description: Signed out. }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /users/me/sessions/{session_id}:
+    delete:
+      operationId: signOutDevice
+      parameters:
+        - { name: session_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Signed out. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /users/me/diary:
+    delete:
+      operationId: resetDiary
+      description: Erases every record and file, keeps the account, increments diary_epoch.
+      responses:
+        "204": { description: Erased. }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /users/me/storage:
+    get:
+      operationId: getStorage
+      responses:
+        "200":
+          description: Storage use. quota_bytes is 0 when unlimited.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [used_bytes, quota_bytes]
+                properties:
+                  used_bytes: { type: integer, format: int64 }
+                  quota_bytes: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /changes:
+    get:
+      operationId: listChanges
+      description: Changes of every collection after cursor, oldest first. Tombstones come back once.
+      parameters:
+        - { name: cursor, in: query, schema: { type: integer, format: int64, minimum: 0, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 200 } }
+      responses:
+        "200":
+          description: One page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecordPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: pushChanges
+      description: Applies 1 to 100 changes of any collections; each commits on its own.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [changes]
+              properties:
+                changes:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: { $ref: "#/components/schemas/Change" }
+      responses:
+        "200":
+          description: One result per change, in request order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/ChangeResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /entries/{id}: { $ref: "#/components/pathItems/Record" }
+  /patterns/{id}: { $ref: "#/components/pathItems/Record" }
+  /activities/{id}: { $ref: "#/components/pathItems/Record" }
+  /places/{id}: { $ref: "#/components/pathItems/Record" }
+  /bookmark-folders/{id}: { $ref: "#/components/pathItems/Record" }
+  /bookmarks/{id}: { $ref: "#/components/pathItems/Record" }
+
+  /attachments:
+    get:
+      operationId: listAttachments
+      description: Every file of the account, oldest first, to find files no entry references.
+      responses:
+        "200":
+          description: Files.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Attachment" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /attachments/{attachment_id}:
+    parameters:
+      - $ref: "#/components/parameters/AttachmentID"
+    put:
+      operationId: uploadAttachment
+      description: Uploads an encrypted file once; files are immutable. Counts against the quota.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "201": { $ref: "#/components/responses/Attachment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "411": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+    get:
+      operationId: downloadAttachment
+      description: Supports Range (206).
+      responses:
+        "200": { $ref: "#/components/responses/Bytes" }
+        "206": { $ref: "#/components/responses/Bytes" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteAttachment
+      description: Deletes the file and its preview.
+      responses:
+        "204": { description: Deleted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /attachments/{attachment_id}/preview:
+    parameters:
+      - $ref: "#/components/parameters/AttachmentID"
+    put:
+      operationId: uploadPreview
+      description: >-
+        Adds the preview of an existing file, once. At most 256 KiB (413) and, when the account
+        has a quota, at most the file's size (400). Outside the quota.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "201": { $ref: "#/components/responses/Attachment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "411": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+    get:
+      operationId: downloadPreview
+      responses:
+        "200": { $ref: "#/components/responses/Bytes" }
+        "206": { $ref: "#/components/responses/Bytes" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+
+  parameters:
+    RecordID:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/RecordID" }
+    AttachmentID:
+      name: attachment_id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }
+
+  pathItems:
+    Record:
+      parameters:
+        - $ref: "#/components/parameters/RecordID"
+      put:
+        description: version 0 creates and fails with 409 if the record exists (tombstones included); otherwise version must equal the server's.
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, blob]
+                properties:
+                  version: { type: integer, minimum: 0 }
+                  blob: { type: string, format: byte, description: 1 to 262144 bytes before base64. }
+        responses:
+          "200": { $ref: "#/components/responses/Record" }
+          "201": { $ref: "#/components/responses/Record" }
+          "400": { $ref: "#/components/responses/BadRequest" }
+          "401": { $ref: "#/components/responses/Error" }
+          "404": { $ref: "#/components/responses/Error" }
+          "409": { $ref: "#/components/responses/Conflict" }
+      delete:
+        parameters:
+          - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        responses:
+          "204": { description: Deleted; the record becomes a tombstone. }
+          "400": { $ref: "#/components/responses/BadRequest" }
+          "401": { $ref: "#/components/responses/Error" }
+          "404": { $ref: "#/components/responses/Error" }
+          "409": { $ref: "#/components/responses/Conflict" }
+
+  responses:
+    Error:
+      description: Error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooManyRequests:
+      description: Rate limit reached.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Auth:
+      description: Session opened.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [token, user, keys]
+            properties:
+              token: { type: string }
+              user: { $ref: "#/components/schemas/User" }
+              keys: { $ref: "#/components/schemas/KeyBundle" }
+    Record:
+      description: The record as stored.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Record" }
+    Conflict:
+      description: Stale version; current is the server copy, possibly a tombstone.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, current]
+            properties:
+              error: { type: string }
+              current: { $ref: "#/components/schemas/Record" }
+    Attachment:
+      description: The stored file.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Attachment" }
+    Bytes:
+      description: Encrypted bytes.
+      content:
+        application/octet-stream:
+          schema: { type: string, format: binary }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Key32:
+      type: string
+      format: byte
+      description: 32 bytes.
+    KDFParams:
+      type: object
+      description: Opaque to the server; the app writes {"alg":"argon2id","m":65536,"t":3,"p":1}.
+      additionalProperties: true
+    KeyMaterial:
+      type: object
+      required: [kdf_salt, kdf_params, wrapped_key_password]
+      properties:
+        kdf_salt: { type: string, format: byte, description: 16 bytes. }
+        kdf_params: { $ref: "#/components/schemas/KDFParams" }
+        wrapped_key_password: { type: string, format: byte, description: 1 to 1024 bytes. }
+    RecoveryMaterial:
+      type: object
+      required: [recovery_auth_key, wrapped_key_recovery]
+      properties:
+        recovery_auth_key: { $ref: "#/components/schemas/Key32" }
+        wrapped_key_recovery: { type: string, format: byte, description: 1 to 1024 bytes. }
+    KeyBundle:
+      type: object
+      required: [kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery]
+      properties:
+        kdf_salt: { type: string, format: byte }
+        kdf_params: { $ref: "#/components/schemas/KDFParams" }
+        wrapped_key_password: { type: string, format: byte }
+        wrapped_key_recovery: { type: string, format: byte }
+    Device:
+      type: object
+      description: Readable by the server; send a device model, never the user's name.
+      properties:
+        name: { type: string, maxLength: 64 }
+        platform: { type: string, maxLength: 64 }
+    User:
+      type: object
+      required: [user_id, email, diary_epoch, created_at]
+      properties:
+        user_id: { type: string, format: uuid }
+        email: { type: [string, "null"] }
+        diary_epoch: { type: integer }
+        created_at: { type: string, format: date-time }
+    Session:
+      type: object
+      required: [session_id, device_name, platform, created_at, last_seen_at, current]
+      properties:
+        session_id: { type: string, format: uuid }
+        device_name: { type: [string, "null"] }
+        platform: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        current: { type: boolean }
+    Collection:
+      type: string
+      enum: [entries, patterns, activities, places, bookmark-folders, bookmarks]
+    RecordID:
+      type: string
+      description: 64 lowercase hex characters (HMAC id of a day) or a lowercase UUIDv7.
+      pattern: "^(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+    Record:
+      type: object
+      required: [collection, id, blob, version, seq, updated_at]
+      properties:
+        collection: { $ref: "#/components/schemas/Collection" }
+        id: { $ref: "#/components/schemas/RecordID" }
+        blob: { type: string, format: byte, description: Empty on a tombstone. }
+        version: { type: integer, minimum: 1 }
+        seq: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time }
+    RecordPage:
+      type: object
+      required: [items, next_cursor, has_more, total, diary_epoch]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Record" }
+        next_cursor: { type: integer, format: int64 }
+        has_more: { type: boolean }
+        total: { type: integer, format: int64, description: Changes after the request's cursor. }
+        diary_epoch: { type: integer }
+    Change:
+      type: object
+      required: [collection, id, version]
+      properties:
+        collection: { $ref: "#/components/schemas/Collection" }
+        id: { $ref: "#/components/schemas/RecordID" }
+        version: { type: integer, minimum: 0, description: The server's version; 0 creates. At least 1 to delete. }
+        blob: { type: string, format: byte, description: Required unless deleted; absent when deleted. }
+        deleted: { type: boolean, default: false }
+    ChangeResult:
+      type: object
+      required: [collection, id, status]
+      properties:
+        collection: { type: string }
+        id: { type: string }
+        status: { type: string, enum: [created, updated, deleted, conflict, not_found, invalid, error] }
+        error: { type: string }
+        item: { $ref: "#/components/schemas/Record" }
+    Attachment:
+      type: object
+      required: [attachment_id, size_bytes, preview_size_bytes, created_at]
+      properties:
+        attachment_id: { type: string, format: uuid }
+        size_bytes: { type: integer, format: int64 }
+        preview_size_bytes: { type: integer, format: int64, description: 0 when there is no preview. }
+        created_at: { type: string, format: date-time }

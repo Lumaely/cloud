@@ -1,6 +1,6 @@
 # Lumaely Cloud API
 
-Contract between the app and the cloud server. All bodies are JSON unless stated. Binary fields (`[]byte`) are base64 strings. Protected routes take `Authorization: Bearer <token>`.
+Contract between the app and the cloud server. The machine-readable copy is [openapi.yaml](openapi.yaml); a test keeps its routes equal to the router's. All bodies are JSON unless stated. Binary fields (`[]byte`) are base64 strings. Protected routes take `Authorization: Bearer <token>`.
 
 ## Zero-knowledge keys
 
@@ -16,7 +16,6 @@ flowchart LR
   DK[diary key, random 32 bytes]
   KEK -. seals .-> W1[wrapped_key_password]
   RKEK -. seals .-> W2[wrapped_key_recovery]
-  DK -. seals .-> ER[encrypted_recovery_key]
   AK --> SRV[(server: bcrypt auth_key)]
   RA --> SRV2[(server: bcrypt recovery_auth_key)]
 ```
@@ -25,12 +24,14 @@ flowchart LR
 |---|---|
 | `kdf_salt`, `kdf_params` | yes, public per account |
 | bcrypt of `auth_key`, bcrypt of `recovery_auth_key` | no |
-| `wrapped_key_password`, `wrapped_key_recovery`, `encrypted_recovery_key` | no |
-| entries, patterns, activities, places, folders, bookmark blobs, files | no |
-| `entry_timestamp`, `sha256_hash`, `media_type`, file sizes, ids | yes |
+| `wrapped_key_password`, `wrapped_key_recovery` | no |
+| record blobs (days, moods, journal, patterns, places, folders, bookmarks and their links), files, file keys and media types | no |
+| collection names, record ids, `version`, `seq`, `updated_at`, file ids, sizes and upload times | yes |
 | session `device_name`, `platform`, `created_at`, `last_seen_at` | yes |
 
-`kdf_params` is opaque to the server (suggested: `{"alg":"argon2id","m":65536,"t":3,"p":1}`). Wrapped keys are opaque blobs (suggested: XChaCha20-Poly1305, nonce prefixed).
+`kdf_params` and wrapped keys are opaque to the server; the app's formats are in [Shared conventions](#shared-conventions).
+
+The server never stores the recovery key, not even sealed: a device holding the diary key could otherwise read it and take over the account. A lost recovery key is replaced, not shown again: the app makes a new one and sends it through `PUT /users/me/password` with `recovery`.
 
 ### Key bundle
 
@@ -40,8 +41,7 @@ Returned by register, login, recovery and `GET /users/me/keys`.
 {
   "kdf_salt": "base64", "kdf_params": {},
   "wrapped_key_password": "base64",
-  "wrapped_key_recovery": "base64",
-  "encrypted_recovery_key": "base64"
+  "wrapped_key_recovery": "base64"
 }
 ```
 
@@ -50,17 +50,17 @@ Returned by register, login, recovery and `GET /users/me/keys`.
 | Route | Body | Result |
 |---|---|---|
 | `POST /users/login/params` | `{email}` | `{kdf_salt, kdf_params}`. Unknown emails get a stable fake salt. |
-| `POST /users/register` | `{email, auth_key, recovery_auth_key, kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery, encrypted_recovery_key, device?}` | 201 `{token, user, keys}`, 409 email taken |
+| `POST /users/register` | `{email, auth_key, recovery_auth_key, kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery, device?}` | 201 `{token, user, keys}`, 409 email taken. No third party is called. |
 | `POST /users/login` | `{email, auth_key, device?}` | 200 `{token, user, keys}`, 401 |
 | `POST /users/recover/start` | `{email, recovery_auth_key}` | 200 `{recovery_token, wrapped_key_recovery}` (valid 15 min), 401 |
 | `POST /users/recover/finish` | `{recovery_token, auth_key, kdf_salt, kdf_params, wrapped_key_password, device?}` | 200 `{token, user, keys}`. Signs out every other device. |
 | `GET /users/me` | | `{user_id, email, created_at, diary_epoch}` |
 | `GET /users/me/keys` | | key bundle |
-| `PUT /users/me/password` | `{current_auth_key, auth_key, kdf_salt, kdf_params, wrapped_key_password, recovery?, sign_out_other_devices}` | 204, 401 wrong current key. `recovery` = `{recovery_auth_key, wrapped_key_recovery, encrypted_recovery_key}` replaces the recovery key. |
+| `PUT /users/me/password` | `{current_auth_key, auth_key, kdf_salt, kdf_params, wrapped_key_password, recovery?, sign_out_other_devices}` | 204, 401 wrong current key. `recovery` = `{recovery_auth_key, wrapped_key_recovery}` replaces the recovery key. |
 | `GET /users/me/sessions` | | 200 list of the account's live sessions, see [Devices](#devices). |
 | `DELETE /users/me/sessions` | | 204. Signs out every device, this one included. |
 | `DELETE /users/me/sessions/{session_id}` | | 204. Signs out that device, this one allowed. 404 unknown or another account's session, 400 malformed id. |
-| `DELETE /users/me/diary` | | 204. Erases entries, patterns, activities, places, folders, bookmarks and files. Keeps the account. Increments `diary_epoch`. |
+| `DELETE /users/me/diary` | | 204. Erases every record and file. Keeps the account. Increments `diary_epoch`. |
 | `DELETE /users/me` | | 204. Deletes the account and its files. |
 | `GET /users/me/storage` | | `{used_bytes, quota_bytes}`. `used_bytes` counts files, not previews. `quota_bytes` is 0 when unlimited. |
 | `POST /users/erase/request` | `{email}` | 202 always. Emails a 6-digit code valid 15 min when the account exists. |
@@ -93,93 +93,125 @@ Rate limits (per route and client IP, see `TRUSTED_PROXIES`): register, login, l
 
 The server applies pending database migrations at startup; see README.md.
 
-## Sync model
+## Records
 
-Every synced item carries `version` (starts at 1, +1 on each change) and `seq` (per-user change counter). Lists return changes after a cursor, oldest first.
+Every synced item is a record of one collection: `entries`, `patterns`, `activities`, `places`, `bookmark-folders`, `bookmarks`. The server stores `{collection, id, blob, version, seq, updated_at, deleted_at?}` and never reads the blob.
 
-```mermaid
-sequenceDiagram
-  participant A as App
-  participant S as Server
-  A->>S: GET /patterns?cursor=0&limit=200
-  S-->>A: items (seq 1..200), next_cursor=200, has_more=true, total=350, diary_epoch=1
-  A->>S: GET /patterns?cursor=200
-  S-->>A: items (seq 201..350), next_cursor=350, has_more=false
-  Note over A: store next_cursor, reuse it next time
-  A->>S: PUT /patterns/{id} {version: 4, blob}
-  S-->>A: 200 {version: 5} or 409 {current item}
-```
-
-List query: `cursor` (default 0), `limit` (1 to 500, default 200). List response:
-
-```json
-{"items": [], "next_cursor": 350, "has_more": false, "total": 350, "diary_epoch": 1}
-```
-
-- `total` counts the changes after the request's `cursor`, for progress bars.
-- Deleted items come back once as tombstones with `deleted_at` set.
-- When `diary_epoch` differs from the one the app holds, the diary was reset or erased: drop local data and resync from cursor 0.
-
-## Encrypted resources
-
-`/patterns`, `/activities`, `/places`, `/bookmark-folders`, `/bookmarks` share one shape.
+- **id**: chosen by the app, stored as sent. 64 lowercase hex characters (a day's HMAC id) or a lowercase UUIDv7. Anything else: 400.
+- **version**: 1 at creation, +1 on every change, deletes included.
+- **seq**: per-user change counter across all collections.
+- **blob**: 1 to 256 KiB; empty on a tombstone.
 
 | Route | Body | Result |
 |---|---|---|
-| `GET /{resource}` | | list response |
-| `POST /{resource}` | `{blob}` (+ refs) | 201 item |
-| `PUT /{resource}/{id}` | `{version, blob}` (+ refs) | 200 item, 404, 409 `{error, current}` |
-| `DELETE /{resource}/{id}` | | 204, 404 |
+| `PUT /{collection}/{id}` | `{version, blob}` | 201 created, 200 updated, 409 `{error, current}`, 404, 400 |
+| `DELETE /{collection}/{id}?version=N` | | 204, 409 `{error, current}`, 404, 400 |
 
-Item: `{id, blob, version, seq, updated_at, deleted_at?}` (+ refs).
+A write names the version it is based on; the server applies it only if that is still its version:
 
-`/bookmarks` refs: `entry_id` (required), `folder_id` (null = Unsorted). Deleting a folder moves its bookmarks to Unsorted. Deleting an entry deletes its bookmarks.
-
-## Entries
-
-### `GET /sync`
-
-List response of entries. Entry: `{entry_id, mood_scale, metadata_blob, entry_timestamp, sha256_hash, version, seq, updated_at, deleted_at?, attachments: [{attachment_id, encrypted_aes_key, media_type, size_bytes, preview_size_bytes, has_preview}]}`. `size_bytes` is the file; `preview_size_bytes` is the preview, 0 when none.
-
-### `POST /sync`
-
-Batch push, `multipart/form-data`, up to 100 operations and 10 files per entry.
-
-- Part `operations`: JSON array.
-- File parts: any name, referenced from `operations`.
-
-```json
-[
-  {"ref": "a", "entry_timestamp": "2026-10-29T00:00:00Z", "sha256_hash": "…",
-   "mood_scale": "base64", "metadata_blob": "base64",
-   "attachments": [{"file": "f1", "preview": "p1", "encrypted_aes_key": "base64", "media_type": "image/jpeg"}]},
-  {"ref": "b", "entry_id": "uuid", "version": 3, "mood_scale": "…", "metadata_blob": "…",
-   "entry_timestamp": "…", "sha256_hash": "…"},
-  {"ref": "c", "entry_id": "uuid", "deleted": true}
-]
+```mermaid
+flowchart TD
+  W[PUT or DELETE with version v] --> F{record on server?}
+  F -->|no| C{v = 0 and not a delete?}
+  C -->|yes| CR[201 created, version 1]
+  C -->|no| NF[404]
+  F -->|yes| D{delete of a tombstone?}
+  D -->|yes| NF
+  D -->|no| V{v = server version?}
+  V -->|no| CF[409 with current record]
+  V -->|yes| OK[200 updated or 204 deleted, version +1]
 ```
 
-Omit `entry_id` to create; set it with `version` to update or delete. Each operation commits on its own; the response lists every result.
+- `version: 0` means "create; must not exist yet". Two devices creating the same day get one 201 and one 409 with the server copy.
+- A tombstone counts as existing: revive a deleted record with a PUT of the tombstone's version.
+- A delete never wins over an unseen edit: it gets 409, and the app decides.
+
+## Change feed
+
+### `GET /changes?cursor=&limit=`
+
+Changes of every collection after `cursor`, oldest first. `limit` 1 to 500, default 200.
 
 ```json
-{"results": [
-  {"ref": "a", "status": "created", "entry": {}},
-  {"ref": "b", "status": "conflict", "entry": {}},
-  {"ref": "c", "status": "deleted"}
+{"items": [{"collection": "entries", "id": "9f…", "blob": "base64", "version": 3, "seq": 41,
+            "updated_at": "2026-10-29T20:31:05Z"}],
+ "next_cursor": 41, "has_more": false, "total": 1, "diary_epoch": 1}
+```
+
+- `total` counts the changes after the request's `cursor`, for progress bars.
+- Deleted records come back once as tombstones with `deleted_at` set.
+- When `diary_epoch` differs from the one the app holds, the diary was reset or erased: drop synced state and resync from cursor 0.
+
+### `POST /changes`
+
+Pushes 1 to 100 changes of any collections. Each commits on its own, with the same rules as `PUT` and `DELETE`.
+
+```json
+{"changes": [
+  {"collection": "entries", "id": "9f…", "version": 0, "blob": "base64"},
+  {"collection": "patterns", "id": "0190…", "version": 4, "blob": "base64"},
+  {"collection": "bookmarks", "id": "0191…", "version": 2, "deleted": true}
 ]}
 ```
 
-Statuses: `created`, `updated`, `deleted`, `conflict` (stale `version` or duplicate `sha256_hash`; `entry` is the server copy), `not_found`, `invalid` (includes a preview over 256 KiB, or larger than its file when the account has a quota), `quota_exceeded`, `error`.
+```json
+{"results": [
+  {"collection": "entries", "id": "9f…", "status": "created", "item": {}},
+  {"collection": "patterns", "id": "0190…", "status": "conflict", "error": "stale version", "item": {}},
+  {"collection": "bookmarks", "id": "0191…", "status": "deleted"}
+]}
+```
+
+Results follow the request order. Statuses: `created`, `updated`, `deleted`, `conflict` (`item` is the server copy), `not_found`, `invalid`, `error`.
 
 ## Files
 
-| Route | Result |
-|---|---|
-| `GET /attachments/{id}` | File bytes, `Range` supported (206). |
-| `GET /attachments/{id}/preview` | Preview bytes, 404 when none. |
-| `DELETE /attachments/{id}` | 204. Bumps the entry `version` and `seq`. |
+Files are uploaded on their own and are not linked to records: the day blob lists its attachment ids, with each file's key and media type. The server knows only their ids, sizes and upload times.
 
-Files count against the account quota (`STORAGE_QUOTA_BYTES`, 5 GiB on Lumaely Cloud, 0 on self-hosted). Previews do not; each is at most 256 KiB and, when the quota is not 0, at most the size of its file.
+| Route | Body | Result |
+|---|---|---|
+| `PUT /attachments/{id}` | encrypted bytes, `Content-Length` required | 201 `{attachment_id, size_bytes, preview_size_bytes, created_at}`, 409 exists, 411, 413 quota exceeded |
+| `PUT /attachments/{id}/preview` | encrypted bytes | 201, 404 no file, 409 preview exists, 413 over 256 KiB, 400 larger than its file when the account has a quota |
+| `GET /attachments` | | every file of the account, oldest first |
+| `GET /attachments/{id}` | | file bytes, `Range` supported (206) |
+| `GET /attachments/{id}/preview` | | preview bytes, 404 when none |
+| `DELETE /attachments/{id}` | | 204, 404. Deletes the file and its preview. |
+
+- `id` is a lowercase UUIDv7 chosen by the app. Files and previews are immutable: a retry after a lost response gets 409, which means it is stored.
+- The app deletes a day's files when it deletes the day. `GET /attachments` finds files no entry lists any more.
+- Files count against the account quota (`STORAGE_QUOTA_BYTES`, 5 GiB on Lumaely Cloud, 0 on self-hosted). Previews do not; each is at most 256 KiB and, when the quota is not 0, at most the size of its file.
+
+## Shared conventions
+
+The server stores what the app sends; both apps must follow these to the bit.
+
+| Item | Convention |
+|---|---|
+| Id of a day | HMAC-SHA-512-256(id key, `entry:YYYY-MM-DD`), lowercase hex. The id key is derived from the diary key with context `lmy_ids_`. |
+| Id of any other record or file | UUIDv7, lowercase text, made by the app |
+| Blob | XChaCha20-Poly1305: 24-byte nonce, then ciphertext and tag. Key derived from the diary key with context `lmy_sync`. |
+| AAD | `lumaely:<collection>:<id>:<version>`, with the version the record will have once accepted (base version + 1) |
+| Payload | JSON with a `v` field (payload format) |
+| Key bundle | `kdf_params` = `{"alg":"argon2id","m":65536,"t":3,"p":1}`; wrapped keys are nonce-prefixed XChaCha20-Poly1305 |
+| Dates inside blobs | days as `YYYY-MM-DD`; edit times as ISO 8601 UTC with milliseconds |
+
+A day blob, decrypted:
+
+```json
+{
+  "v": 1,
+  "date": "2026-10-29",
+  "whole_day": false,
+  "journal": {"text": "A nice walk", "updated_at": "2026-10-29T20:31:05.123Z"},
+  "moods": [
+    {"moment": "morning", "score": 4, "updated_at": "2026-10-29T08:02:11.004Z"},
+    {"moment": "evening", "score": 2, "updated_at": "2026-10-29T20:31:05.123Z"}
+  ],
+  "attachments": [{"id": "0191…", "key": "base64", "media_type": "image/jpeg"}]
+}
+```
+
+On a 409 the app merges the two copies field by field, using the `updated_at` inside the blob.
 
 ## Other
 

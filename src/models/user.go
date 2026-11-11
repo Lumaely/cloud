@@ -20,17 +20,15 @@ type KeyMaterial struct {
 }
 
 type RecoveryMaterial struct {
-	RecoveryAuthKey      []byte `json:"recovery_auth_key" binding:"required"`
-	WrappedKeyRecovery   []byte `json:"wrapped_key_recovery" binding:"required"`
-	EncryptedRecoveryKey []byte `json:"encrypted_recovery_key" binding:"required"`
+	RecoveryAuthKey    []byte `json:"recovery_auth_key" binding:"required"`
+	WrappedKeyRecovery []byte `json:"wrapped_key_recovery" binding:"required"`
 }
 
 type KeyBundle struct {
-	KDFSalt              []byte          `json:"kdf_salt"`
-	KDFParams            json.RawMessage `json:"kdf_params"`
-	WrappedKeyPassword   []byte          `json:"wrapped_key_password"`
-	WrappedKeyRecovery   []byte          `json:"wrapped_key_recovery"`
-	EncryptedRecoveryKey []byte          `json:"encrypted_recovery_key"`
+	KDFSalt            []byte          `json:"kdf_salt"`
+	KDFParams          json.RawMessage `json:"kdf_params"`
+	WrappedKeyPassword []byte          `json:"wrapped_key_password"`
+	WrappedKeyRecovery []byte          `json:"wrapped_key_recovery"`
 }
 
 // Device names the session a sign-in opens, for GET /users/me/sessions.

@@ -23,17 +23,15 @@ type Settings struct {
 
 type Handler struct {
 	DB       *sql.DB
-	Payment  services.PaymentService
 	Auth     *services.AuthService
 	Storage  services.BlobStorage
 	Mailer   services.Mailer
 	Settings Settings
 }
 
-func NewHandler(db *sql.DB, payment services.PaymentService, auth *services.AuthService, storage services.BlobStorage, mailer services.Mailer, settings Settings) *Handler {
+func NewHandler(db *sql.DB, auth *services.AuthService, storage services.BlobStorage, mailer services.Mailer, settings Settings) *Handler {
 	return &Handler{
 		DB:       db,
-		Payment:  payment,
 		Auth:     auth,
 		Storage:  storage,
 		Mailer:   mailer,

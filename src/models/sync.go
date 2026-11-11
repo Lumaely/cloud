@@ -2,27 +2,12 @@ package models
 
 import "time"
 
-type MoodEntry struct {
-	EntryID        string       `json:"entry_id"`
-	MoodScale      []byte       `json:"mood_scale"`
-	MetadataBlob   []byte       `json:"metadata_blob"`
-	EntryTimestamp time.Time    `json:"entry_timestamp"`
-	SHA256Hash     string       `json:"sha256_hash"`
-	Version        int          `json:"version"`
-	Seq            int64        `json:"seq"`
-	UpdatedAt      time.Time    `json:"updated_at"`
-	DeletedAt      *time.Time   `json:"deleted_at,omitempty"`
-	Attachments    []Attachment `json:"attachments"`
-}
-
-// Attachment file is served by GET /attachments/:attachment_id.
+// Attachment is a standalone encrypted file; the entry blob that uses it holds its key and media type.
 type Attachment struct {
-	AttachmentID     string `json:"attachment_id"`
-	EncryptedAESKey  []byte `json:"encrypted_aes_key"`
-	MediaType        string `json:"media_type"`
-	SizeBytes        int64  `json:"size_bytes"`
-	PreviewSizeBytes int64  `json:"preview_size_bytes"`
-	HasPreview       bool   `json:"has_preview"`
+	AttachmentID     string    `json:"attachment_id"`
+	SizeBytes        int64     `json:"size_bytes"`
+	PreviewSizeBytes int64     `json:"preview_size_bytes"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type Page[T any] struct {
@@ -33,50 +18,42 @@ type Page[T any] struct {
 	DiaryEpoch int   `json:"diary_epoch"`
 }
 
-// EntryOperation is one item of the POST /sync "operations" part.
-type EntryOperation struct {
-	Ref            string                `json:"ref"`
-	EntryID        string                `json:"entry_id"`
-	Version        int                   `json:"version"`
-	Deleted        bool                  `json:"deleted"`
-	MoodScale      []byte                `json:"mood_scale"`
-	MetadataBlob   []byte                `json:"metadata_blob"`
-	EntryTimestamp string                `json:"entry_timestamp"`
-	SHA256Hash     string                `json:"sha256_hash"`
-	Attachments    []AttachmentOperation `json:"attachments"`
-}
-
-type AttachmentOperation struct {
-	File            string `json:"file"`
-	Preview         string `json:"preview"`
-	EncryptedAESKey []byte `json:"encrypted_aes_key"`
-	MediaType       string `json:"media_type"`
-}
-
-type OperationResult struct {
-	Ref    string     `json:"ref"`
-	Status string     `json:"status"`
-	Error  string     `json:"error,omitempty"`
-	Entry  *MoodEntry `json:"entry,omitempty"`
-}
-
+// Record is one encrypted item of a collection; the app chooses its id.
 type Record struct {
-	ID        string     `json:"id"`
-	Blob      []byte     `json:"blob"`
-	Version   int        `json:"version"`
-	Seq       int64      `json:"seq"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
-	// Bookmarks only.
-	EntryID  *string `json:"entry_id,omitempty"`
-	FolderID *string `json:"folder_id,omitempty"`
+	Collection string     `json:"collection"`
+	ID         string     `json:"id"`
+	Blob       []byte     `json:"blob"`
+	Version    int        `json:"version"`
+	Seq        int64      `json:"seq"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
 }
 
-type RecordInput struct {
-	Blob     []byte  `json:"blob"`
-	Version  int     `json:"version"`
-	EntryID  *string `json:"entry_id"`
-	FolderID *string `json:"folder_id"`
+// RecordWrite is the body of PUT /{collection}/{id}; Version 0 creates.
+type RecordWrite struct {
+	Version int    `json:"version"`
+	Blob    []byte `json:"blob"`
+}
+
+// Change is one item of POST /changes.
+type Change struct {
+	Collection string `json:"collection"`
+	ID         string `json:"id"`
+	Version    int    `json:"version"`
+	Blob       []byte `json:"blob"`
+	Deleted    bool   `json:"deleted"`
+}
+
+type ChangesRequest struct {
+	Changes []Change `json:"changes"`
+}
+
+type ChangeResult struct {
+	Collection string  `json:"collection"`
+	ID         string  `json:"id"`
+	Status     string  `json:"status"`
+	Error      string  `json:"error,omitempty"`
+	Item       *Record `json:"item,omitempty"`
 }
 
 type FeedbackRequest struct {

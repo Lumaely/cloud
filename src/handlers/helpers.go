@@ -114,10 +114,7 @@ func validateRecoveryMaterial(r models.RecoveryMaterial) error {
 	if err := validateKey("recovery_auth_key", r.RecoveryAuthKey); err != nil {
 		return err
 	}
-	if err := validateWrapped("wrapped_key_recovery", r.WrappedKeyRecovery); err != nil {
-		return err
-	}
-	return validateWrapped("encrypted_recovery_key", r.EncryptedRecoveryKey)
+	return validateWrapped("wrapped_key_recovery", r.WrappedKeyRecovery)
 }
 
 func validateWrapped(name string, b []byte) error {

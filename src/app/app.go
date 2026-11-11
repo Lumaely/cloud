@@ -69,7 +69,7 @@ func serve(version string) error {
 	}
 
 	authService := services.NewAuthService()
-	h := handlers.NewHandler(db, &services.MockStripeService{}, authService, storage, mailer, handlers.Settings{
+	h := handlers.NewHandler(db, authService, storage, mailer, handlers.Settings{
 		Version:      version,
 		Mode:         cfg.Mode,
 		StorageQuota: cfg.StorageQuota,
