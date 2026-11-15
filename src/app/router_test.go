@@ -49,8 +49,6 @@ var protectedRoutes = []string{
 	"PUT /attachments/:attachment_id/preview", "GET /attachments/:attachment_id/preview",
 }
 
-var cloudProtectedRoutes = append([]string{"POST /users/me/delete/request"}, protectedRoutes...)
-
 var collectionPaths = []string{"entries", "patterns", "activities", "places", "bookmark-folders", "bookmarks"}
 
 func TestRouterRegistersRoutes(t *testing.T) {
@@ -61,7 +59,7 @@ func TestRouterRegistersRoutes(t *testing.T) {
 		"POST /users/register", "POST /users/register/start", "POST /users/login/params", "POST /users/login",
 		"POST /users/recover/start", "POST /users/recover/finish",
 		"POST /users/erase/request", "POST /users/erase/confirm",
-	}, cloudProtectedRoutes...)
+	}, protectedRoutes...)
 	for _, col := range collectionPaths {
 		want = append(want, "PUT /"+col+"/:id", "DELETE /"+col+"/:id")
 	}
@@ -74,7 +72,7 @@ func TestRouterRegistersRoutes(t *testing.T) {
 
 func TestRouterSelfHostedHasNoEmailRoutes(t *testing.T) {
 	for _, route := range routes(newTestRouter(t, handlers.ModeSelfHosted)) {
-		if strings.HasPrefix(route, "POST /users/erase/") || route == "POST /users/me/delete/request" || route == "POST /users/register/start" {
+		if strings.HasPrefix(route, "POST /users/erase/") || route == "POST /users/register/start" {
 			t.Errorf("%s registered in self-hosted mode", route)
 		}
 	}
@@ -82,7 +80,7 @@ func TestRouterSelfHostedHasNoEmailRoutes(t *testing.T) {
 
 func TestRouterProtectsPrivateRoutes(t *testing.T) {
 	r := newTestRouter(t, handlers.ModeCloud)
-	all := slices.Clone(cloudProtectedRoutes)
+	all := slices.Clone(protectedRoutes)
 	for _, col := range collectionPaths {
 		all = append(all, "PUT /"+col+"/:id", "DELETE /"+col+"/:id")
 	}

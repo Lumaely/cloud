@@ -62,8 +62,7 @@ Returned by register, login, recovery and `GET /users/me/keys`.
 | `DELETE /users/me/sessions` | | 204. Signs out every device, this one included. |
 | `DELETE /users/me/sessions/{session_id}` | | 204. Signs out that device, this one allowed. 404 unknown or another account's session, 400 malformed id. |
 | `DELETE /users/me/diary` | | 204. Erases every record and file. Keeps the account. Increments `diary_epoch`. |
-| `POST /users/me/delete/request` | | 202. Emails a 6-digit code valid 15 min to the account address. A request within 60 s of the last sent code, or past 10 codes sent in 24 h, sends nothing and keeps that code. 503 `{"error": "Failed to send email"}` when the email fails; retry at once. Cloud mode only. |
-| `DELETE /users/me` | `{code}` | 204. Deletes the account and its files. 400 missing code, 401 wrong or expired code; 5 wrong codes burn it. Self-hosted: no body. |
+| `DELETE /users/me` | | 204. Deletes the account and its files. |
 | `GET /users/me/storage` | | `{used_bytes, quota_bytes}`. `used_bytes` counts files, not previews. `quota_bytes` is 0 when unlimited. |
 | `POST /users/erase/request` | `{email}` | 202 always, also for an unknown address or a failed email, so the answer never reveals an account. Emails a 6-digit code valid 15 min in the background when the account exists. A request within 60 s of the last sent code, or past 10 codes sent in 24 h, sends nothing and keeps that code. When no email arrives, retry after 60 s. |
 | `POST /users/erase/confirm` | `{email, code, device?}` + register key fields | 200 `{token, user, keys}`. Erases the diary, replaces the keys, signs out every device. 401 wrong or expired code; 5 wrong codes burn it. |

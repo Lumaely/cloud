@@ -18,7 +18,6 @@ import (
 const (
 	codeSignup     = "signup"
 	codeErase      = "erase"
-	codeDelete     = "delete"
 	codeResendWait = 60 * time.Second
 	codeDailyCap   = 10
 	codeCapWindow  = 24 * time.Hour

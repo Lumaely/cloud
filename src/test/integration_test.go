@@ -616,79 +616,17 @@ func (s *stack) requestErase(email string) {
 	s.h.WaitNotices()
 }
 
-func (s *stack) deleteAccount(a *account) {
-	s.t.Helper()
-	expect(s.t, s.do(http.MethodPost, "/users/me/delete/request", a.token, nil), http.StatusAccepted)
-	expect(s.t, s.do(http.MethodDelete, "/users/me", a.token, map[string]string{"code": s.mailer.lastCode(s.t)}), http.StatusNoContent)
-}
-
-func TestIntegrationDeleteRequiresEmailedCode(t *testing.T) {
-	s := newStack(t, 0)
-	a := s.register("Del@Test.local")
-	expect(t, s.upload(a.token, "/attachments/"+uuidV7(t), "a"), http.StatusCreated)
-
-	expect(t, s.do(http.MethodPost, "/users/me/delete/request", "", nil), http.StatusUnauthorized)
-	expect(t, s.do(http.MethodPost, "/users/me/delete/request", a.token, nil), http.StatusAccepted)
-	if n := s.mailer.count(); n != 1 {
-		t.Fatalf("emails = %d, want 1", n)
-	}
-	code := s.mailer.lastCode(t)
-
-	expect(t, s.do(http.MethodPost, "/users/me/delete/request", a.token, nil), http.StatusAccepted)
-	if n := s.mailer.count(); n != 1 {
-		t.Errorf("throttled request sent, emails = %d", n)
-	}
-
-	expect(t, s.do(http.MethodDelete, "/users/me", a.token, nil), http.StatusBadRequest)
-	expect(t, s.do(http.MethodDelete, "/users/me", a.token, map[string]string{"code": "000000"}), http.StatusUnauthorized)
-	expect(t, s.do(http.MethodGet, "/users/me", a.token, nil), http.StatusOK)
-	if len(s.objectKeys(a.userID+"/")) != 1 {
-		t.Error("objects removed on a wrong code")
-	}
-
-	expect(t, s.do(http.MethodDelete, "/users/me", a.token, map[string]string{"code": code}), http.StatusNoContent)
-	expect(t, s.login(a.email, a.authKey), http.StatusUnauthorized)
-	if keys := s.objectKeys(a.userID + "/"); len(keys) != 0 {
-		t.Errorf("objects remain: %v", keys)
-	}
-	expect(t, s.do(http.MethodDelete, "/users/me", a.token, map[string]string{"code": code}), http.StatusUnauthorized)
-}
-
-func TestIntegrationDeleteCodeBurnsAfterWrongGuesses(t *testing.T) {
-	s := newStack(t, 0)
-	a := s.register("burn@test.local")
-	expect(t, s.do(http.MethodPost, "/users/me/delete/request", a.token, nil), http.StatusAccepted)
-	code := s.mailer.lastCode(t)
-	for range 5 {
-		expect(t, s.do(http.MethodDelete, "/users/me", a.token, map[string]string{"code": "000000"}), http.StatusUnauthorized)
-	}
-	expect(t, s.do(http.MethodDelete, "/users/me", a.token, map[string]string{"code": code}), http.StatusUnauthorized)
-}
-
-func TestIntegrationDeleteCodeSendFailure(t *testing.T) {
-	s := newStack(t, 0)
-	a := s.register("delfail@test.local")
-	s.mailer.setFail(true)
-	expect(t, s.do(http.MethodPost, "/users/me/delete/request", a.token, nil), http.StatusServiceUnavailable)
-	s.mailer.setFail(false)
-	expect(t, s.do(http.MethodPost, "/users/me/delete/request", a.token, nil), http.StatusAccepted)
-}
-
-func TestIntegrationSelfHostedDeleteNeedsNoCode(t *testing.T) {
-	s := newStackMode(t, 0, handlers.ModeSelfHosted)
-	a := s.register("self@test.local")
-	expect(t, s.do(http.MethodPost, "/users/me/delete/request", a.token, nil), http.StatusNotFound)
-	expect(t, s.do(http.MethodDelete, "/users/me", a.token, nil), http.StatusNoContent)
-	expect(t, s.login(a.email, a.authKey), http.StatusUnauthorized)
-}
-
 func TestIntegrationDeleteUserRemovesObjects(t *testing.T) {
 	s := newStack(t, 0)
 	gone, keeper := s.register("gone@test.local"), s.register("keeper@test.local")
 	expect(t, s.upload(gone.token, "/attachments/"+uuidV7(t), "a"), http.StatusCreated)
 	expect(t, s.upload(keeper.token, "/attachments/"+uuidV7(t), "c"), http.StatusCreated)
 
-	s.deleteAccount(gone)
+	sent := s.mailer.count()
+	expect(t, s.do(http.MethodDelete, "/users/me", gone.token, nil), http.StatusNoContent)
+	if n := s.mailer.count(); n != sent {
+		t.Errorf("deletion sent %d email(s)", n-sent)
+	}
 
 	if keys := s.objectKeys(gone.userID + "/"); len(keys) != 0 {
 		t.Errorf("deleted user's objects remain: %v", keys)

@@ -121,7 +121,7 @@ func TestCodeHashIsKeyedAndBound(t *testing.T) {
 		"plain sha256": hashSecret("123456"),
 		"secret":       other.codeHash("a@b.c", codeErase, "123456"),
 		"email":        h.codeHash("x@b.c", codeErase, "123456"),
-		"kind":         h.codeHash("a@b.c", codeDelete, "123456"),
+		"kind":         h.codeHash("a@b.c", codeSignup, "123456"),
 		"code":         h.codeHash("a@b.c", codeErase, "654321"),
 	} {
 		if a == b {

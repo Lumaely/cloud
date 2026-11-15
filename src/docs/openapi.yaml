@@ -256,28 +256,10 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
     delete:
       operationId: deleteMe
-      description: Deletes the account and its files. Cloud mode needs the emailed code; self-hosted takes no body. 5 wrong codes burn the code.
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [code]
-              properties:
-                code: { type: string }
+      description: Deletes the account and its files.
       responses:
         "204": { description: Deleted. }
-        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Error" }
-
-  /users/me/delete/request:
-    post:
-      operationId: deleteRequest
-      description: Cloud mode only. Emails a 6-digit code valid 15 minutes to the account address. Within 60 s of the last sent code, or past 10 codes sent in 24 hours, sends nothing and keeps that code.
-      responses:
-        "202": { description: Accepted. }
-        "401": { $ref: "#/components/responses/Error" }
-        "503": { $ref: "#/components/responses/EmailFailed" }
 
   /users/me/keys:
     get:
