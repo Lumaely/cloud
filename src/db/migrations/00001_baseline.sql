@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Short-lived single-use codes: password recovery and erase-and-start-over.
+-- Short-lived single-use recovery tokens.
 CREATE TABLE IF NOT EXISTS user_challenges (
     challenge_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -39,6 +39,18 @@ CREATE TABLE IF NOT EXISTS user_challenges (
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (user_id, kind)
+);
+
+-- Emailed one-time codes, keyed by address so they also serve accounts not created yet.
+CREATE TABLE IF NOT EXISTS email_codes (
+    email TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    secret_hash VARCHAR(64) NOT NULL,
+    attempts INT NOT NULL DEFAULT 0,
+    expires_at TIMESTAMPTZ NOT NULL,
+    -- Set when a send slot is claimed, reset to NULL after a failed send; drives the 60 s resend throttle.
+    sent_at TIMESTAMPTZ NULL,
+    PRIMARY KEY (email, kind)
 );
 
 -- Every synced collection. The app chooses ids and encrypts blobs; the server only orders and versions them.
@@ -82,4 +94,4 @@ CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, last
 CREATE UNIQUE INDEX IF NOT EXISTS idx_records_seq ON records(user_id, seq);
 
 -- +goose Down
-DROP TABLE IF EXISTS feedback, attachments, records, user_challenges, user_sessions, users;
+DROP TABLE IF EXISTS feedback, attachments, records, email_codes, user_challenges, user_sessions, users;
