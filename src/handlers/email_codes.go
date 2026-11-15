@@ -29,11 +29,19 @@ var errCodeInvalid = errors.New("invalid or expired code")
 // issueCode emails a fresh code for (email, kind) unless one was sent within codeResendWait
 // or codeDailyCap codes were sent in the current codeCapWindow.
 func (h *Handler) issueCode(ctx context.Context, email, kind string, compose func(code string) services.Email) error {
-	code, err := randomDigits(6)
-	if err != nil {
+	code, err := h.claimCode(ctx, email, kind)
+	if err != nil || code == "" {
 		return err
 	}
-	secretHash := h.codeHash(email, kind, code)
+	return h.sendCode(ctx, email, kind, code, compose)
+}
+
+// claimCode stores a fresh code for (email, kind) and returns it, or "" while the throttle or daily cap holds.
+func (h *Handler) claimCode(ctx context.Context, email, kind string) (string, error) {
+	code, err := randomDigits(6)
+	if err != nil {
+		return "", err
+	}
 	// sent_at claims the slot in the same statement as the throttle check, so concurrent requests send once.
 	err = h.DB.QueryRowContext(ctx, `
 		INSERT INTO email_codes (email, kind, secret_hash, expires_at, sent_at, window_start, window_count)
@@ -45,24 +53,29 @@ func (h *Handler) issueCode(ctx context.Context, email, kind string, compose fun
 		WHERE (email_codes.sent_at IS NULL OR email_codes.sent_at < NOW() - make_interval(secs => $5))
 			AND (email_codes.window_count < $6 OR email_codes.window_start < NOW() - make_interval(secs => $7))
 		RETURNING 1
-	`, email, kind, secretHash, time.Now().Add(challengeTTL), codeResendWait.Seconds(), codeDailyCap, codeCapWindow.Seconds()).Scan(new(int))
+	`, email, kind, h.codeHash(email, kind, code), time.Now().Add(challengeTTL), codeResendWait.Seconds(), codeDailyCap, codeCapWindow.Seconds()).Scan(new(int))
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return "", nil
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
-	if err := h.Mailer.Send(ctx, compose(code)); err != nil {
-		// Release the slot so an immediate retry sends.
-		if _, dbErr := h.DB.ExecContext(context.WithoutCancel(ctx), `
-			UPDATE email_codes SET sent_at = NULL, window_count = window_count - 1
-			WHERE email = $1 AND kind = $2 AND secret_hash = $3
-		`, email, kind, secretHash); dbErr != nil {
-			log.Printf("%s code slot for %q not released: %v", kind, email, dbErr)
-		}
-		return err
+	return code, nil
+}
+
+// sendCode emails a claimed code; on failure it releases the slot so an immediate retry sends.
+func (h *Handler) sendCode(ctx context.Context, email, kind, code string, compose func(code string) services.Email) error {
+	err := h.Mailer.Send(ctx, compose(code))
+	if err == nil {
+		return nil
 	}
-	return nil
+	if _, dbErr := h.DB.ExecContext(context.WithoutCancel(ctx), `
+		UPDATE email_codes SET sent_at = NULL, window_count = window_count - 1
+		WHERE email = $1 AND kind = $2 AND secret_hash = $3
+	`, email, kind, h.codeHash(email, kind, code)); dbErr != nil {
+		log.Printf("%s code slot for %q not released: %v", kind, email, dbErr)
+	}
+	return err
 }
 
 // checkCode consumes a matching code; a wrong guess counts toward maxCodeAttempts, which burns it.
@@ -110,16 +123,23 @@ func (h *Handler) codeHash(email, kind, code string) string {
 
 // notify sends e in the background; a failed notice never fails the request.
 func (h *Handler) notify(e services.Email) {
-	h.notices.Add(1)
-	go func() {
-		defer h.notices.Done()
+	h.inBackground(func() {
 		if err := h.Mailer.Send(context.Background(), e); err != nil {
 			log.Printf("notice %q to %q failed: %v", e.Subject, e.To, err)
 		}
+	})
+}
+
+// inBackground runs fn after the response; WaitNotices waits for it.
+func (h *Handler) inBackground(fn func()) {
+	h.notices.Add(1)
+	go func() {
+		defer h.notices.Done()
+		fn()
 	}()
 }
 
-// WaitNotices blocks until every pending notice is sent or failed.
+// WaitNotices blocks until every pending background email is sent or failed.
 func (h *Handler) WaitNotices() {
 	h.notices.Wait()
 }

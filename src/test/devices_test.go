@@ -132,7 +132,7 @@ func TestIntegrationDeviceStoredOnEverySessionRoute(t *testing.T) {
 	expect(t, w, http.StatusOK)
 	check(decode[models.AuthResponse](t, w).Token)
 
-	expect(t, s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": a.email}), http.StatusAccepted)
+	s.requestErase(a.email)
 	confirm := s.keyFields(a)
 	confirm["code"], confirm["device"] = s.mailer.lastCode(t), device
 	w = s.do(http.MethodPost, "/users/erase/confirm", "", confirm)

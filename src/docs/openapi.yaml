@@ -202,7 +202,7 @@ paths:
   /users/erase/request:
     post:
       operationId: eraseRequest
-      description: Cloud mode only. 202 also for an unknown address; emails a 6-digit code valid 15 minutes when the account exists. Within 60 s of the last sent code, or past 10 codes sent in 24 hours, sends nothing and keeps that code.
+      description: Cloud mode only. 202 always, also for an unknown address or a failed email, so the answer never reveals an account. Emails a 6-digit code valid 15 minutes in the background when the account exists. Within 60 s of the last sent code, or past 10 codes sent in 24 hours, sends nothing and keeps that code. When no email arrives, retry after 60 s.
       security: []
       requestBody:
         required: true
@@ -217,7 +217,6 @@ paths:
         "202": { description: Accepted. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
-        "503": { $ref: "#/components/responses/EmailFailed" }
 
   /users/erase/confirm:
     post:

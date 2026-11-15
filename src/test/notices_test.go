@@ -121,7 +121,7 @@ func TestIntegrationNoNoticeForSingleSessionOrErase(t *testing.T) {
 	s.noNotice()
 
 	b := s.register("bob@test.local")
-	expect(t, s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": b.email}), http.StatusAccepted)
+	s.requestErase(b.email)
 	confirm := s.keyFields(b)
 	confirm["code"] = s.mailer.lastCode(t)
 	s.mailer.reset()

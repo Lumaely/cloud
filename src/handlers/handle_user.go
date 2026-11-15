@@ -761,26 +761,31 @@ func (h *Handler) EraseRequest(c *gin.Context) {
 	email := normalizeEmail(req.Email)
 
 	err := h.DB.QueryRowContext(ctx, `SELECT 1 FROM users WHERE email = $1`, email).Scan(new(int))
-	if errors.Is(err, sql.ErrNoRows) {
-		c.Status(http.StatusAccepted)
+	known := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		serverError(c, "Database error")
 		return
 	}
+	// Unknown addresses claim a slot too and the send runs after the answer: timing and status never reveal an account.
+	code, err := h.claimCode(ctx, email, codeErase)
 	if err != nil {
 		serverError(c, "Database error")
 		return
 	}
-
-	err = h.issueCode(ctx, email, codeErase, func(code string) services.Email {
-		return services.Email{
-			To:      email,
-			Subject: "Your Lumaely erase code",
-			Body:    fmt.Sprintf("Your code to erase your Lumaely diary and start over is %s.\nIt expires in 15 minutes. If you didn't ask for it, ignore this email.", code),
-		}
-	})
-	if err != nil {
-		log.Printf("erase code email to %q failed: %v", email, err)
-		sendCodeFailed(c)
-		return
+	if known && code != "" {
+		sendCtx := context.WithoutCancel(ctx)
+		h.inBackground(func() {
+			err := h.sendCode(sendCtx, email, codeErase, code, func(code string) services.Email {
+				return services.Email{
+					To:      email,
+					Subject: "Your Lumaely erase code",
+					Body:    fmt.Sprintf("Your code to erase your Lumaely diary and start over is %s.\nIt expires in 15 minutes. If you didn't ask for it, ignore this email.", code),
+				}
+			})
+			if err != nil {
+				log.Printf("erase code email to %q failed: %v", email, err)
+			}
+		})
 	}
 	c.Status(http.StatusAccepted)
 }

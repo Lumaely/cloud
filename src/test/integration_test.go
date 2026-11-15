@@ -408,11 +408,14 @@ func TestIntegrationEraseAndStartOver(t *testing.T) {
 	s.create(a.token, "entries", dayID(t), "day")
 	expect(t, s.upload(a.token, "/attachments/"+uuidV7(t), "x"), http.StatusCreated)
 
-	expect(t, s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": "ghost@test.local"}), http.StatusAccepted)
+	s.requestErase("ghost@test.local")
 	if s.mailer.count() != 0 {
 		t.Fatal("email sent for unknown account")
 	}
-	expect(t, s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": a.email}), http.StatusAccepted)
+	s.requestErase(a.email)
+	if n := s.mailer.count(); n != 1 {
+		t.Fatalf("emails = %d, want 1", n)
+	}
 	code := s.mailer.lastCode(t)
 
 	newKey := randomBytes(t, 32)
@@ -442,7 +445,7 @@ func TestIntegrationEraseAndStartOver(t *testing.T) {
 func TestIntegrationEraseCodeBurnsAfterFiveFailures(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("burn@test.local")
-	expect(t, s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": a.email}), http.StatusAccepted)
+	s.requestErase(a.email)
 	code := s.mailer.lastCode(t)
 
 	confirm := s.keyFields(&account{email: a.email, authKey: randomBytes(t, 32), recoveryKey: randomBytes(t, 32)})
@@ -457,13 +460,9 @@ func TestIntegrationEraseCodeBurnsAfterFiveFailures(t *testing.T) {
 func TestIntegrationEraseRequestThrottle(t *testing.T) {
 	s := newStack(t, 0)
 	s.register("throttle@test.local")
-	request := func(email string) *httptest.ResponseRecorder {
-		return s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": email})
-	}
-
-	expect(t, request("THROTTLE@test.local"), http.StatusAccepted)
-	expect(t, request("Throttle@Test.local"), http.StatusAccepted)
-	expect(t, request("throttle@test.local"), http.StatusAccepted)
+	s.requestErase("THROTTLE@test.local")
+	s.requestErase("Throttle@Test.local")
+	s.requestErase("throttle@test.local")
 	if n := s.mailer.count(); n != 1 {
 		t.Fatalf("emails within 60 s = %d, want 1", n)
 	}
@@ -471,7 +470,7 @@ func TestIntegrationEraseRequestThrottle(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE email_codes SET sent_at = NOW() - INTERVAL '61 seconds'`); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, request("throttle@test.local"), http.StatusAccepted)
+	s.requestErase("throttle@test.local")
 	if n := s.mailer.count(); n != 2 {
 		t.Errorf("emails after 60 s = %d, want 2", n)
 	}
@@ -480,9 +479,7 @@ func TestIntegrationEraseRequestThrottle(t *testing.T) {
 func TestIntegrationBurnedCodeKeepsThrottle(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("burnwait@test.local")
-	request := func() {
-		expect(t, s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": a.email}), http.StatusAccepted)
-	}
+	request := func() { s.requestErase(a.email) }
 	confirm := s.keyFields(&account{email: a.email, authKey: randomBytes(t, 32), recoveryKey: randomBytes(t, 32)})
 
 	request()
@@ -572,28 +569,51 @@ func TestIntegrationEraseRequestThrottleConcurrent(t *testing.T) {
 		})
 	}
 	wg.Wait()
+	s.h.WaitNotices()
 	if n := s.mailer.count(); n != 1 {
 		t.Errorf("concurrent requests sent %d emails, want 1", n)
+	}
+}
+
+func TestIntegrationEraseRequestHidesAccount(t *testing.T) {
+	s := newStack(t, 0)
+	a := s.register("known@test.local")
+	s.mailer.setFail(true)
+	s.requestErase(a.email)
+	s.requestErase("ghost@test.local")
+	s.mailer.setFail(false)
+
+	s.requestErase("ghost@test.local")
+	if n := s.mailer.count(); n != 0 {
+		t.Fatalf("emails for unknown account = %d, want 0", n)
+	}
+	var claimed bool
+	if err := s.db.QueryRow(`SELECT sent_at IS NOT NULL FROM email_codes WHERE email = 'ghost@test.local' AND kind = 'erase'`).Scan(&claimed); err != nil || !claimed {
+		t.Fatalf("unknown account slot claimed = %v, err = %v", claimed, err)
 	}
 }
 
 func TestIntegrationEraseRequestSendFailure(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("fail@test.local")
-	request := map[string]string{"email": a.email}
 
 	s.mailer.setFail(true)
-	w := s.do(http.MethodPost, "/users/erase/request", "", request)
-	expect(t, w, http.StatusServiceUnavailable)
-	if got := decode[map[string]string](t, w)["error"]; got != "Failed to send email" {
-		t.Errorf("error = %q", got)
-	}
+	s.requestErase(a.email)
 
 	s.mailer.setFail(false)
-	expect(t, s.do(http.MethodPost, "/users/erase/request", "", request), http.StatusAccepted)
+	s.requestErase(a.email)
+	if n := s.mailer.count(); n != 1 {
+		t.Fatalf("emails after retry = %d, want 1", n)
+	}
 	confirm := s.keyFields(&account{email: a.email, authKey: randomBytes(t, 32), recoveryKey: randomBytes(t, 32)})
 	confirm["code"] = s.mailer.lastCode(t)
 	expect(t, s.do(http.MethodPost, "/users/erase/confirm", "", confirm), http.StatusOK)
+}
+
+func (s *stack) requestErase(email string) {
+	s.t.Helper()
+	expect(s.t, s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": email}), http.StatusAccepted)
+	s.h.WaitNotices()
 }
 
 func (s *stack) deleteAccount(a *account) {
