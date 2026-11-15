@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/mail"
 )
 
 type Email struct {
@@ -43,6 +44,9 @@ func NewMailer(cfg MailConfig) (Mailer, error) {
 	case "scaleway":
 		if cfg.SecretKey == "" || cfg.ProjectID == "" {
 			return nil, fmt.Errorf("MAIL_DRIVER scaleway needs SCW_SECRET_KEY and SCW_PROJECT_ID")
+		}
+		if _, err := mail.ParseAddress(cfg.From); err != nil {
+			return nil, fmt.Errorf("MAIL_DRIVER scaleway needs a valid MAIL_FROM: %w", err)
 		}
 		return &ScalewayMailer{From: cfg.From, SecretKey: cfg.SecretKey, ProjectID: cfg.ProjectID, Region: cfg.Region}, nil
 	default:

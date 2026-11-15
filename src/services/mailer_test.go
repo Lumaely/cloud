@@ -47,8 +47,16 @@ func TestNewMailerScalewayNeedsKeys(t *testing.T) {
 			t.Errorf("NewMailer(%+v) accepted", cfg)
 		}
 	}
-	if m, err := NewMailer(MailConfig{Driver: "scaleway", SecretKey: "k", ProjectID: "p"}); err != nil || m == nil {
+	if m, err := NewMailer(MailConfig{Driver: "scaleway", From: "Lumaely <no-reply@test>", SecretKey: "k", ProjectID: "p"}); err != nil || m == nil {
 		t.Errorf("valid config: %v, %v", m, err)
+	}
+}
+
+func TestNewMailerScalewayNeedsValidFrom(t *testing.T) {
+	for _, from := range []string{"", "not an address", "Lumaely <>"} {
+		if _, err := NewMailer(MailConfig{Driver: "scaleway", From: from, SecretKey: "k", ProjectID: "p"}); err == nil {
+			t.Errorf("MAIL_FROM %q accepted", from)
+		}
 	}
 }
 
