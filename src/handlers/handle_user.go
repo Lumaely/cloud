@@ -127,6 +127,44 @@ func (h *Handler) respondWithSession(c *gin.Context, tx *sql.Tx, userID string, 
 	c.JSON(status, models.AuthResponse{Token: token, User: user, Keys: keys})
 }
 
+// RegisterStart answers 202 for known and unknown addresses alike; both send before answering.
+func (h *Handler) RegisterStart(c *gin.Context) {
+	var req models.RegisterStartRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, err)
+		return
+	}
+	ctx := c.Request.Context()
+	email := normalizeEmail(req.Email)
+
+	var exists bool
+	if err := h.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE email = $1)`, email).Scan(&exists); err != nil {
+		serverError(c, "Database error")
+		return
+	}
+
+	err := h.issueCode(ctx, email, codeSignup, func(code string) services.Email {
+		if exists {
+			return services.Email{
+				To:      email,
+				Subject: "You already have a Lumaely account",
+				Body:    "You already have a Lumaely account with this address. Sign in, or use your recovery key if you forgot your password.",
+			}
+		}
+		return services.Email{
+			To:      email,
+			Subject: "Your Lumaely sign-up code",
+			Body:    fmt.Sprintf("Your Lumaely sign-up code is %s.\nIt expires in 15 minutes. If you didn't ask for it, ignore this email.", code),
+		}
+	})
+	if err != nil {
+		log.Printf("sign-up code email to %q failed: %v", email, err)
+		sendCodeFailed(c)
+		return
+	}
+	c.Status(http.StatusAccepted)
+}
+
 func (h *Handler) RegisterUser(c *gin.Context) {
 	var req models.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -156,6 +194,24 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		return
 	}
 	defer tx.Rollback()
+
+	if h.Settings.Mode == ModeCloud {
+		// Consumed in tx: a conflict rolls back and leaves the code usable.
+		err := h.checkCode(ctx, tx, email, codeSignup, req.Code)
+		if errors.Is(err, errCodeInvalid) {
+			// Commit keeps the failed attempt counted.
+			if err := tx.Commit(); err != nil {
+				serverError(c, "Transaction commit failed")
+				return
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired code"})
+			return
+		}
+		if err != nil {
+			serverError(c, "Database error")
+			return
+		}
+	}
 
 	var userID string
 	err = tx.QueryRowContext(ctx, `

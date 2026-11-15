@@ -116,7 +116,7 @@ func TestIntegrationDeviceStoredOnEverySessionRoute(t *testing.T) {
 	}
 
 	a := &account{email: "every@test.local", authKey: randomBytes(t, 32), recoveryKey: randomBytes(t, 32)}
-	body := s.keyFields(a)
+	body := s.signupFields(a)
 	body["device"] = device
 	w := s.do(http.MethodPost, "/users/register", "", body)
 	expect(t, w, http.StatusCreated)

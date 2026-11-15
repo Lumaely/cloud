@@ -50,9 +50,30 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
+  /users/register/start:
+    post:
+      operationId: registerStart
+      description: Cloud mode only. 202 also for an address that already has an account, which gets an "already have an account" notice with no code; a new address gets a 6-digit code valid 15 minutes. Within 60 s of the last one, sends nothing and keeps that code.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202": { description: Accepted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/EmailFailed" }
+
   /users/register:
     post:
       operationId: register
+      description: Cloud mode requires the emailed sign-up code (401 when missing, wrong or expired; 5 wrong codes burn it). Self-hosted mode takes no code.
       security: []
       requestBody:
         required: true
@@ -66,11 +87,13 @@ paths:
                   required: [email, auth_key]
                   properties:
                     email: { type: string, format: email }
+                    code: { type: string, description: Cloud mode only. }
                     auth_key: { $ref: "#/components/schemas/Key32" }
                     device: { $ref: "#/components/schemas/Device" }
       responses:
         "201": { $ref: "#/components/responses/Auth" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 

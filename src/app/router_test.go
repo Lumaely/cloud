@@ -56,7 +56,7 @@ func TestRouterRegistersRoutes(t *testing.T) {
 
 	want := append([]string{
 		"GET /health", "POST /feedback",
-		"POST /users/register", "POST /users/login/params", "POST /users/login",
+		"POST /users/register", "POST /users/register/start", "POST /users/login/params", "POST /users/login",
 		"POST /users/recover/start", "POST /users/recover/finish",
 		"POST /users/erase/request", "POST /users/erase/confirm",
 	}, protectedRoutes...)
@@ -72,7 +72,7 @@ func TestRouterRegistersRoutes(t *testing.T) {
 
 func TestRouterSelfHostedHasNoEmailRoutes(t *testing.T) {
 	for _, route := range routes(newTestRouter(t, handlers.ModeSelfHosted)) {
-		if strings.HasPrefix(route, "POST /users/erase/") {
+		if strings.HasPrefix(route, "POST /users/erase/") || route == "POST /users/register/start" {
 			t.Errorf("%s registered in self-hosted mode", route)
 		}
 	}

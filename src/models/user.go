@@ -46,8 +46,13 @@ type Session struct {
 	Current    bool      `json:"current"`
 }
 
+type RegisterStartRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
 type RegisterRequest struct {
 	Email   string  `json:"email" binding:"required,email"`
+	Code    string  `json:"code"`
 	AuthKey []byte  `json:"auth_key" binding:"required"`
 	Device  *Device `json:"device"`
 	KeyMaterial
