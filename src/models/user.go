@@ -118,6 +118,10 @@ type EraseConfirmRequest struct {
 	RecoveryMaterial
 }
 
+type DeleteAccountRequest struct {
+	Code string `json:"code" binding:"required"`
+}
+
 type StorageUsage struct {
 	UsedBytes  int64 `json:"used_bytes"`
 	QuotaBytes int64 `json:"quota_bytes"`

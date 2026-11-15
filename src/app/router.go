@@ -39,6 +39,9 @@ func NewRouter(h *handlers.Handler, db *sql.DB, auth *services.AuthService, trus
 	{
 		protected.GET("/users/me", h.GetUserProfile)
 		protected.DELETE("/users/me", h.DeleteUserProfile)
+		if h.Settings.Mode == handlers.ModeCloud {
+			protected.POST("/users/me/delete/request", h.DeleteRequest)
+		}
 		protected.GET("/users/me/keys", h.GetKeys)
 		protected.PUT("/users/me/password", h.ChangePassword)
 		protected.GET("/users/me/sessions", h.ListSessions)

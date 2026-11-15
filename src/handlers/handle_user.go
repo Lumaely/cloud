@@ -545,16 +545,89 @@ func (h *Handler) SignOutDevice(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *Handler) DeleteRequest(c *gin.Context) {
+	ctx := c.Request.Context()
+	var email string
+	err := h.DB.QueryRowContext(ctx, `SELECT email FROM users WHERE user_id = $1`, c.GetString("userID")).Scan(&email)
+	if errors.Is(err, sql.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+	if err != nil {
+		serverError(c, "Database error")
+		return
+	}
+
+	err = h.issueCode(ctx, email, codeDelete, func(code string) services.Email {
+		return services.Email{
+			To:      email,
+			Subject: "Your Lumaely deletion code",
+			Body:    fmt.Sprintf("Your code to delete your Lumaely account and all its data is %s.\nIt expires in 15 minutes. If you didn't ask for it, ignore this email and consider changing your password.", code),
+		}
+	})
+	if err != nil {
+		log.Printf("delete code email to %q failed: %v", email, err)
+		sendCodeFailed(c)
+		return
+	}
+	c.Status(http.StatusAccepted)
+}
+
 func (h *Handler) DeleteUserProfile(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID := c.GetString("userID")
 
-	// Objects first: a storage failure keeps the account so the client can retry.
-	if err := h.Storage.DeletePrefix(c.Request.Context(), userID+"/"); err != nil {
+	var req models.DeleteAccountRequest
+	cloud := h.Settings.Mode == ModeCloud
+	if cloud {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			badRequest(c, err)
+			return
+		}
+	}
+
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		serverError(c, "Transaction initiation failed")
+		return
+	}
+	defer tx.Rollback()
+
+	if cloud {
+		var email string
+		err := tx.QueryRowContext(ctx, `SELECT email FROM users WHERE user_id = $1`, userID).Scan(&email)
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
+		if err != nil {
+			serverError(c, "Database error")
+			return
+		}
+		// Locks email_codes before users.
+		err = h.checkCode(ctx, tx, email, codeDelete, req.Code)
+		if errors.Is(err, errCodeInvalid) {
+			// Commit keeps the failed attempt counted.
+			if err := tx.Commit(); err != nil {
+				serverError(c, "Transaction commit failed")
+				return
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired code"})
+			return
+		}
+		if err != nil {
+			serverError(c, "Database error")
+			return
+		}
+	}
+
+	// Objects first: a storage failure rolls back, keeping the account and its code for a retry.
+	if err := h.Storage.DeletePrefix(ctx, userID+"/"); err != nil {
 		serverError(c, "Storage delete error")
 		return
 	}
 
-	res, err := h.DB.ExecContext(c.Request.Context(), `DELETE FROM users WHERE user_id = $1`, userID)
+	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE user_id = $1`, userID)
 	if err != nil {
 		serverError(c, "Database error")
 		return
@@ -563,8 +636,12 @@ func (h *Handler) DeleteUserProfile(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
+	if err := tx.Commit(); err != nil {
+		serverError(c, "Transaction commit failed")
+		return
+	}
 	// Second sweep: an upload committed between the first sweep and the delete lost its row in the cascade.
-	if err := h.Storage.DeletePrefix(context.WithoutCancel(c.Request.Context()), userID+"/"); err != nil {
+	if err := h.Storage.DeletePrefix(context.WithoutCancel(ctx), userID+"/"); err != nil {
 		log.Printf("objects of deleted user %s not swept: %v", userID, err)
 	}
 	c.Status(http.StatusNoContent)
