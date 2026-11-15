@@ -98,14 +98,18 @@ func parseEmailCatalog(raw []byte) (*EmailCatalog, error) {
 	return c, nil
 }
 
-// parseEmailTemplate also executes the template once, so an unknown field fails at load, not on send.
+// Empty and full data run both sides of every {{if}}, so an unknown field fails at load, not on send.
+var emailSamples = []EmailData{{}, {Code: "0", Time: "t", Device: "d", SignedOutOthers: true}}
+
 func parseEmailTemplate(kind EmailKind, part, text string) (*template.Template, error) {
 	t, err := template.New(string(kind) + "." + part).Option("missingkey=error").Parse(text)
 	if err != nil {
 		return nil, fmt.Errorf("emails.yaml: %w", err)
 	}
-	if err := t.Execute(&strings.Builder{}, EmailData{}); err != nil {
-		return nil, fmt.Errorf("emails.yaml: %w", err)
+	for _, data := range emailSamples {
+		if err := t.Execute(&strings.Builder{}, data); err != nil {
+			return nil, fmt.Errorf("emails.yaml: %w", err)
+		}
 	}
 	return t, nil
 }

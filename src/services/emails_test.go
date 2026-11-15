@@ -62,15 +62,17 @@ func TestParseEmailCatalog(t *testing.T) {
 		t.Fatalf("valid catalog: %v", err)
 	}
 	for name, raw := range map[string][]byte{
-		"invalid yaml":  []byte("from: [\n"),
-		"missing entry": catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "-"}, ""),
-		"unknown entry": catalogYAML("Lumaely <a@b.c>", nil, "  welcome:\n    subject: \"s\"\n    body: \"b\"\n"),
-		"invalid from":  catalogYAML("not an address", nil, ""),
-		"empty from":    catalogYAML("", nil, ""),
-		"empty subject": catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "    subject: \"\"\n    body: \"b\"\n"}, ""),
-		"empty body":    catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "    subject: \"s\"\n    body: \" \"\n"}, ""),
-		"bad template":  catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "    subject: \"s\"\n    body: \"{{.Code\"\n"}, ""),
-		"unknown field": catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "    subject: \"{{.Name}}\"\n    body: \"b\"\n"}, ""),
+		"invalid yaml":          []byte("from: [\n"),
+		"missing entry":         catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "-"}, ""),
+		"unknown entry":         catalogYAML("Lumaely <a@b.c>", nil, "  welcome:\n    subject: \"s\"\n    body: \"b\"\n"),
+		"invalid from":          catalogYAML("not an address", nil, ""),
+		"empty from":            catalogYAML("", nil, ""),
+		"empty subject":         catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "    subject: \"\"\n    body: \"b\"\n"}, ""),
+		"empty body":            catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "    subject: \"s\"\n    body: \" \"\n"}, ""),
+		"bad template":          catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "    subject: \"s\"\n    body: \"{{.Code\"\n"}, ""),
+		"unknown field":         catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "    subject: \"{{.Name}}\"\n    body: \"b\"\n"}, ""),
+		"unknown field in if":   catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailSignIn: "    subject: \"s\"\n    body: \"{{if .Device}}{{.Devise}}{{end}}\"\n"}, ""),
+		"unknown field in else": catalogYAML("Lumaely <a@b.c>", map[EmailKind]string{EmailPasswordChanged: "    subject: \"s\"\n    body: \"{{if .SignedOutOthers}}y{{else}}{{.Other}}{{end}}\"\n"}, ""),
 	} {
 		if _, err := parseEmailCatalog(raw); err == nil {
 			t.Errorf("%s: accepted", name)
