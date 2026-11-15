@@ -63,7 +63,7 @@ func serve(version string) error {
 		return fmt.Errorf("object storage init error: %w", err)
 	}
 
-	mailer, err := services.NewMailer(cfg.MailDriver, cfg.MailFrom)
+	mailer, err := services.NewMailer(cfg.Mail)
 	if err != nil {
 		return err
 	}

@@ -9,7 +9,7 @@ import (
 
 var configEnvKeys = []string{
 	"DATABASE_URL", "MIGRATIONS_DIR", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME",
-	"SERVER_MODE", "SERVER_SECRET", "STORAGE_QUOTA_BYTES", "MAIL_DRIVER", "MAIL_FROM", "TRUSTED_PROXIES",
+	"SERVER_MODE", "SERVER_SECRET", "STORAGE_QUOTA_BYTES", "MAIL_DRIVER", "MAIL_FROM", "SCW_SECRET_KEY", "SCW_PROJECT_ID", "SCW_REGION", "TRUSTED_PROXIES",
 	"MINIO_ENDPOINT", "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "MINIO_BUCKET", "MINIO_REGION", "MINIO_USE_SSL",
 }
 
@@ -28,7 +28,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		DBHost: "localhost", DBPort: "5432", DBUser: "Admin",
 		DBPassword: "LumaelyPasswordChangeMePlz", DBName: "Lumaely-db",
 		Mode: handlers.ModeCloud, StorageQuota: 5 << 30,
-		MailDriver: "log", MailFrom: "Lumaely <no-reply@lumaely.app>",
+		Mail: services.MailConfig{Driver: "log", From: "Lumaely <no-reply@lumaely.app>", Region: "fr-par"},
 		S3: services.S3Config{
 			Endpoint: "localhost:9000", AccessKey: "minioadmin", SecretKey: "minioadmin",
 			Bucket: "journal-attachments", Region: "us-east-1", UseSSL: false,

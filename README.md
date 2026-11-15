@@ -177,7 +177,8 @@ Set in `.env` (see `.env.sample`). Compose sets `DB_HOST`, `DB_PORT` and `MINIO_
 | `SERVER_MODE` | `cloud` | `cloud` or `self-hosted` (no email routes, no quota). |
 | `SERVER_SECRET` | random per start | Keeps fake login salts stable; required in production. |
 | `STORAGE_QUOTA_BYTES` | 5 GiB in cloud mode, 0 (unlimited) in self-hosted | Per-account file quota. Previews are not counted; each is at most 256 KiB and, when the quota is not 0, at most the size of its file. |
-| `MAIL_DRIVER`, `MAIL_FROM` | `log`, `Lumaely <no-reply@lumaely.app>` | Email sending; `log` writes emails to the server log. |
+| `MAIL_DRIVER`, `MAIL_FROM` | `log`, `Lumaely <no-reply@lumaely.app>` | Email sending; `log` writes emails to the server log, `scaleway` sends through Scaleway Transactional Email. |
+| `SCW_SECRET_KEY`, `SCW_PROJECT_ID`, `SCW_REGION` | empty, empty, `fr-par` | Scaleway credentials; required when `MAIL_DRIVER=scaleway`. |
 | `TRUSTED_PROXIES` | none | Proxy IPs/CIDRs, so rate limits see client IPs. |
 | `MIGRATIONS_DIR` | empty (built-in) | Folder of migrations to use instead of the built-in ones. Host only (`--local`, tests): Compose blanks it in containers. |
 
