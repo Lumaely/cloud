@@ -50,7 +50,8 @@ Returned by register, login, recovery and `GET /users/me/keys`.
 | Route | Body | Result |
 |---|---|---|
 | `POST /users/login/params` | `{email}` | `{kdf_salt, kdf_params}`. Unknown emails get a stable fake salt. |
-| `POST /users/register` | `{email, auth_key, recovery_auth_key, kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery, device?}` | 201 `{token, user, keys}`, 409 email taken. No third party is called. |
+| `POST /users/register/start` | `{email}` | Cloud mode only. 202, also for an address that already has an account: it gets an "already have an account" notice with no code, a new address gets a 6-digit code valid 15 min. A request within 60 s of the last one, or past 10 codes sent to the address in 24 h, sends nothing and keeps that code. 503 `{"error": "Failed to send email"}` when the email fails; retry at once. |
+| `POST /users/register` | `{email, code, auth_key, recovery_auth_key, kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery, device?}` | 201 `{token, user, keys}`, 409 email taken. Cloud mode: `code` is the emailed sign-up code; 401 when missing, wrong or expired, and 5 wrong codes burn it. Self-hosted: no `code`. |
 | `POST /users/login` | `{email, auth_key, device?}` | 200 `{token, user, keys}`, 401 |
 | `POST /users/recover/start` | `{email, recovery_auth_key}` | 200 `{recovery_token, wrapped_key_recovery}` (valid 15 min), 401 |
 | `POST /users/recover/finish` | `{recovery_token, auth_key, kdf_salt, kdf_params, wrapped_key_password, device?}` | 200 `{token, user, keys}`. Signs out every other device. |
@@ -63,8 +64,10 @@ Returned by register, login, recovery and `GET /users/me/keys`.
 | `DELETE /users/me/diary` | | 204. Erases every record and file. Keeps the account. Increments `diary_epoch`. |
 | `DELETE /users/me` | | 204. Deletes the account and its files. |
 | `GET /users/me/storage` | | `{used_bytes, quota_bytes}`. `used_bytes` counts files, not previews. `quota_bytes` is 0 when unlimited. |
-| `POST /users/erase/request` | `{email}` | 202 always. Emails a 6-digit code valid 15 min when the account exists. |
+| `POST /users/erase/request` | `{email}` | 202 always, also for an unknown address or a failed email, so the answer never reveals an account. Emails a 6-digit code valid 15 min in the background when the account exists. A request within 60 s of the last sent code, or past 10 codes sent in 24 h, sends nothing and keeps that code. When no email arrives, retry after 60 s. |
 | `POST /users/erase/confirm` | `{email, code, device?}` + register key fields | 200 `{token, user, keys}`. Erases the diary, replaces the keys, signs out every device. 401 wrong or expired code; 5 wrong codes burn it. |
+
+Cloud mode emails a plain-text security notice to the account address after a sign-in, password change, recovery key replaced or used, sign-out of all devices, and diary erase. It never blocks the request. Registration, erase, account deletion and single-device sign-out send none.
 
 ### Devices
 
@@ -89,7 +92,7 @@ Register, login, recovery finish and erase confirm each open one session. `devic
 
 An account keeps at most 50 live sessions. Each new session deletes expired ones and signs out the least recently seen beyond 50.
 
-Rate limits (per route and client IP, see `TRUSTED_PROXIES`): register, login, login params, recovery and erase routes allow 10 requests per minute, then 429.
+Rate limits (per route and client IP, see `TRUSTED_PROXIES`): register start, register, login, login params, recovery and erase routes allow 10 requests per minute, then 429.
 
 The server applies pending database migrations at startup; see README.md.
 

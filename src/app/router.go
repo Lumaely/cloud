@@ -29,6 +29,7 @@ func NewRouter(h *handlers.Handler, db *sql.DB, auth *services.AuthService, trus
 	users.POST("/recover/start", authLimit, h.RecoverStart)
 	users.POST("/recover/finish", authLimit, h.RecoverFinish)
 	if h.Settings.Mode == handlers.ModeCloud {
+		users.POST("/register/start", authLimit, h.RegisterStart)
 		users.POST("/erase/request", authLimit, h.EraseRequest)
 		users.POST("/erase/confirm", authLimit, h.EraseConfirm)
 	}

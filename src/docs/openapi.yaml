@@ -50,9 +50,30 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
+  /users/register/start:
+    post:
+      operationId: registerStart
+      description: Cloud mode only. 202 also for an address that already has an account, which gets an "already have an account" notice with no code; a new address gets a 6-digit code valid 15 minutes. Within 60 s of the last one, or past 10 codes sent to the address in 24 hours, sends nothing and keeps that code.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202": { description: Accepted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/EmailFailed" }
+
   /users/register:
     post:
       operationId: register
+      description: Cloud mode requires the emailed sign-up code (401 when missing, wrong or expired; 5 wrong codes burn it). Self-hosted mode takes no code.
       security: []
       requestBody:
         required: true
@@ -66,11 +87,13 @@ paths:
                   required: [email, auth_key]
                   properties:
                     email: { type: string, format: email }
+                    code: { type: string, description: Cloud mode only. }
                     auth_key: { $ref: "#/components/schemas/Key32" }
                     device: { $ref: "#/components/schemas/Device" }
       responses:
         "201": { $ref: "#/components/responses/Auth" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
@@ -179,7 +202,7 @@ paths:
   /users/erase/request:
     post:
       operationId: eraseRequest
-      description: Cloud mode only. Always 202; emails a 6-digit code valid 15 minutes when the account exists.
+      description: Cloud mode only. 202 always, also for an unknown address or a failed email, so the answer never reveals an account. Emails a 6-digit code valid 15 minutes in the background when the account exists. Within 60 s of the last sent code, or past 10 codes sent in 24 hours, sends nothing and keeps that code. When no email arrives, retry after 60 s.
       security: []
       requestBody:
         required: true
@@ -521,6 +544,11 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     TooManyRequests:
       description: Rate limit reached.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    EmailFailed:
+      description: The email was not sent (`Failed to send email`); retry at once.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

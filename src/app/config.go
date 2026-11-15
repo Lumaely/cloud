@@ -23,25 +23,28 @@ type Config struct {
 	Mode           string
 	ServerSecret   string
 	StorageQuota   int64
-	MailDriver     string
-	MailFrom       string
+	Mail           services.MailConfig
 	TrustedProxies []string
 	S3             services.S3Config
 }
 
 func loadConfig() (Config, error) {
 	cfg := Config{
-		DatabaseURL:    os.Getenv("DATABASE_URL"),
-		MigrationsDir:  os.Getenv("MIGRATIONS_DIR"),
-		DBHost:         getEnv("DB_HOST", "localhost"),
-		DBPort:         getEnv("DB_PORT", "5432"),
-		DBUser:         getEnv("DB_USER", "Admin"),
-		DBPassword:     getEnv("DB_PASSWORD", "LumaelyPasswordChangeMePlz"),
-		DBName:         getEnv("DB_NAME", "Lumaely-db"),
-		Mode:           getEnv("SERVER_MODE", handlers.ModeCloud),
-		ServerSecret:   os.Getenv("SERVER_SECRET"),
-		MailDriver:     getEnv("MAIL_DRIVER", "log"),
-		MailFrom:       getEnv("MAIL_FROM", "Lumaely <no-reply@lumaely.app>"),
+		DatabaseURL:   os.Getenv("DATABASE_URL"),
+		MigrationsDir: os.Getenv("MIGRATIONS_DIR"),
+		DBHost:        getEnv("DB_HOST", "localhost"),
+		DBPort:        getEnv("DB_PORT", "5432"),
+		DBUser:        getEnv("DB_USER", "Admin"),
+		DBPassword:    getEnv("DB_PASSWORD", "LumaelyPasswordChangeMePlz"),
+		DBName:        getEnv("DB_NAME", "Lumaely-db"),
+		Mode:          getEnv("SERVER_MODE", handlers.ModeCloud),
+		ServerSecret:  os.Getenv("SERVER_SECRET"),
+		Mail: services.MailConfig{
+			Driver:    getEnv("MAIL_DRIVER", "log"),
+			SecretKey: os.Getenv("SCW_SECRET_KEY"),
+			ProjectID: os.Getenv("SCW_PROJECT_ID"),
+			Region:    getEnv("SCW_REGION", "fr-par"),
+		},
 		TrustedProxies: splitList(os.Getenv("TRUSTED_PROXIES")),
 		S3: services.S3Config{
 			Endpoint:  getEnv("MINIO_ENDPOINT", "localhost:9000"),

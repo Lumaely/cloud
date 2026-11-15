@@ -7,7 +7,6 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -28,9 +27,8 @@ const (
 	sessionTTL         = 60 * 24 * time.Hour
 	maxSessionsPerUser = 50
 	challengeTTL       = 15 * time.Minute
-	maxEraseAttempts   = 5
+	maxCodeAttempts    = 5
 	challengeRecovery  = "recovery"
-	challengeErase     = "erase"
 	defaultKDFParams   = `{"alg":"argon2id","m":65536,"t":3,"p":1}`
 	userColumns        = `user_id, email, diary_epoch, created_at`
 	keyBundleColumns   = `kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery`
@@ -110,23 +108,54 @@ func loadAccount(ctx context.Context, q queryer, userID string) (models.User, mo
 }
 
 // respondWithSession opens a session inside tx, commits, and returns token, user and keys.
-func (h *Handler) respondWithSession(c *gin.Context, tx *sql.Tx, userID string, device *models.Device, status int) {
+// It reports whether the response was sent.
+func (h *Handler) respondWithSession(c *gin.Context, tx *sql.Tx, userID string, device *models.Device, status int) bool {
 	ctx := c.Request.Context()
 	token, err := h.createSession(ctx, tx, userID, device)
 	if err != nil {
 		serverError(c, "Failed to create session")
-		return
+		return false
 	}
 	user, keys, err := loadAccount(ctx, tx, userID)
 	if err != nil {
 		serverError(c, "Database error")
-		return
+		return false
 	}
 	if err := tx.Commit(); err != nil {
 		serverError(c, "Transaction commit failed")
-		return
+		return false
 	}
 	c.JSON(status, models.AuthResponse{Token: token, User: user, Keys: keys})
+	return true
+}
+
+// RegisterStart answers 202 for known and unknown addresses alike; both send before answering.
+func (h *Handler) RegisterStart(c *gin.Context) {
+	var req models.RegisterStartRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, err)
+		return
+	}
+	ctx := c.Request.Context()
+	email := normalizeEmail(req.Email)
+
+	var exists bool
+	if err := h.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE email = $1)`, email).Scan(&exists); err != nil {
+		serverError(c, "Database error")
+		return
+	}
+
+	emailKind := services.EmailSignupCode
+	if exists {
+		emailKind = services.EmailAccountExists
+	}
+	err := h.issueCode(ctx, email, codeSignup, emailKind)
+	if err != nil {
+		log.Printf("sign-up code email to %q failed: %v", email, err)
+		sendCodeFailed(c)
+		return
+	}
+	c.Status(http.StatusAccepted)
 }
 
 func (h *Handler) RegisterUser(c *gin.Context) {
@@ -158,6 +187,24 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		return
 	}
 	defer tx.Rollback()
+
+	if h.Settings.Mode == ModeCloud {
+		// Consumed in tx: a conflict rolls back and leaves the code usable.
+		err := h.checkCode(ctx, tx, email, codeSignup, req.Code)
+		if errors.Is(err, errCodeInvalid) {
+			// Commit keeps the failed attempt counted.
+			if err := tx.Commit(); err != nil {
+				serverError(c, "Transaction commit failed")
+				return
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired code"})
+			return
+		}
+		if err != nil {
+			serverError(c, "Database error")
+			return
+		}
+	}
 
 	var userID string
 	err = tx.QueryRowContext(ctx, `
@@ -239,7 +286,11 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 	defer tx.Rollback()
-	h.respondWithSession(c, tx, userID, req.Device, http.StatusOK)
+	if h.respondWithSession(c, tx, userID, req.Device, http.StatusOK) {
+		if to := h.noticeAddress(ctx, userID); to != "" {
+			h.notify(services.EmailSignIn, to, noticeData(req.Device))
+		}
+	}
 }
 
 func (h *Handler) RecoverStart(c *gin.Context) {
@@ -327,7 +378,11 @@ func (h *Handler) RecoverFinish(c *gin.Context) {
 		serverError(c, "Database error")
 		return
 	}
-	h.respondWithSession(c, tx, userID, req.Device, http.StatusOK)
+	if h.respondWithSession(c, tx, userID, req.Device, http.StatusOK) {
+		if to := h.noticeAddress(ctx, userID); to != "" {
+			h.notify(services.EmailRecoveryUsed, to, noticeData(req.Device))
+		}
+	}
 }
 
 func setPasswordKeys(ctx context.Context, q queryer, userID, authHash string, k models.KeyMaterial) error {
@@ -433,14 +488,28 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+	if to := h.noticeAddress(ctx, userID); to != "" {
+		if req.Recovery != nil {
+			h.notify(services.EmailRecoveryReplaced, to, noticeData(nil))
+		} else {
+			data := noticeData(nil)
+			data.SignedOutOthers = req.SignOutOtherDevices
+			h.notify(services.EmailPasswordChanged, to, data)
+		}
+	}
 }
 
 func (h *Handler) SignOutAllDevices(c *gin.Context) {
-	if _, err := h.DB.ExecContext(c.Request.Context(), `DELETE FROM user_sessions WHERE user_id = $1`, c.GetString("userID")); err != nil {
+	ctx := c.Request.Context()
+	userID := c.GetString("userID")
+	if _, err := h.DB.ExecContext(ctx, `DELETE FROM user_sessions WHERE user_id = $1`, userID); err != nil {
 		serverError(c, "Database error")
 		return
 	}
 	c.Status(http.StatusNoContent)
+	if to := h.noticeAddress(ctx, userID); to != "" {
+		h.notify(services.EmailSignedOutAll, to, noticeData(nil))
+	}
 }
 
 func (h *Handler) ListSessions(c *gin.Context) {
@@ -492,15 +561,16 @@ func (h *Handler) SignOutDevice(c *gin.Context) {
 }
 
 func (h *Handler) DeleteUserProfile(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID := c.GetString("userID")
 
 	// Objects first: a storage failure keeps the account so the client can retry.
-	if err := h.Storage.DeletePrefix(c.Request.Context(), userID+"/"); err != nil {
+	if err := h.Storage.DeletePrefix(ctx, userID+"/"); err != nil {
 		serverError(c, "Storage delete error")
 		return
 	}
 
-	res, err := h.DB.ExecContext(c.Request.Context(), `DELETE FROM users WHERE user_id = $1`, userID)
+	res, err := h.DB.ExecContext(ctx, `DELETE FROM users WHERE user_id = $1`, userID)
 	if err != nil {
 		serverError(c, "Database error")
 		return
@@ -510,7 +580,7 @@ func (h *Handler) DeleteUserProfile(c *gin.Context) {
 		return
 	}
 	// Second sweep: an upload committed between the first sweep and the delete lost its row in the cascade.
-	if err := h.Storage.DeletePrefix(context.WithoutCancel(c.Request.Context()), userID+"/"); err != nil {
+	if err := h.Storage.DeletePrefix(context.WithoutCancel(ctx), userID+"/"); err != nil {
 		log.Printf("objects of deleted user %s not swept: %v", userID, err)
 	}
 	c.Status(http.StatusNoContent)
@@ -558,6 +628,9 @@ func (h *Handler) ResetDiary(c *gin.Context) {
 	}
 	h.deleteObjects(keys)
 	c.Status(http.StatusNoContent)
+	if to := h.noticeAddress(ctx, userID); to != "" {
+		h.notify(services.EmailDiaryReset, to, noticeData(nil))
+	}
 }
 
 // eraseDiaryRows deletes every diary row and bumps diary_epoch so other devices drop their copy.
@@ -604,35 +677,26 @@ func (h *Handler) EraseRequest(c *gin.Context) {
 	ctx := c.Request.Context()
 	email := normalizeEmail(req.Email)
 
-	var userID string
-	err := h.DB.QueryRowContext(ctx, `SELECT user_id FROM users WHERE email = $1`, email).Scan(&userID)
-	if errors.Is(err, sql.ErrNoRows) {
-		c.Status(http.StatusAccepted)
+	err := h.DB.QueryRowContext(ctx, `SELECT 1 FROM users WHERE email = $1`, email).Scan(new(int))
+	known := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		serverError(c, "Database error")
 		return
 	}
+	// Unknown addresses claim a slot too and the send runs after the answer: timing and status never reveal an account.
+	code, err := h.claimCode(ctx, email, codeErase)
 	if err != nil {
 		serverError(c, "Database error")
 		return
 	}
-
-	code, err := randomDigits(6)
-	if err != nil {
-		serverError(c, "Failed to create code")
-		return
-	}
-	if err := storeChallenge(ctx, h.DB, userID, challengeErase, code); err != nil {
-		serverError(c, "Database error")
-		return
-	}
-	err = h.Mailer.Send(ctx, services.Email{
-		To:      email,
-		Subject: "Your Lumaely erase code",
-		Body:    fmt.Sprintf("Your code to erase your Lumaely diary and start over is %s.\nIt expires in 15 minutes. If you didn't ask for it, ignore this email.", code),
-	})
-	if err != nil {
-		log.Printf("erase code email to %q failed: %v", email, err)
-		serverError(c, "Failed to send email")
-		return
+	if known && code != "" {
+		sendCtx := context.WithoutCancel(ctx)
+		h.inBackground(func() {
+			err := h.sendCode(sendCtx, email, codeErase, code, services.EmailEraseCode)
+			if err != nil {
+				log.Printf("erase code email to %q failed: %v", email, err)
+			}
+		})
 	}
 	c.Status(http.StatusAccepted)
 }
@@ -650,13 +714,8 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 	ctx := c.Request.Context()
 	email := normalizeEmail(req.Email)
 
-	var userID, secretHash string
-	var attempts int
-	err := h.DB.QueryRowContext(ctx, `
-		SELECT u.user_id, ch.secret_hash, ch.attempts
-		FROM users u JOIN user_challenges ch ON ch.user_id = u.user_id
-		WHERE u.email = $1 AND ch.kind = $2 AND ch.expires_at > NOW()
-	`, email, challengeErase).Scan(&userID, &secretHash, &attempts)
+	var userID string
+	err := h.DB.QueryRowContext(ctx, `SELECT user_id FROM users WHERE email = $1`, email).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired code"})
 		return
@@ -665,9 +724,27 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 		serverError(c, "Database error")
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(hashSecret(req.Code)), []byte(secretHash)) != 1 {
-		h.countFailedAttempt(ctx, userID, attempts)
+
+	// The code is consumed inside tx: a later failure rolls back and leaves it usable.
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		serverError(c, "Transaction initiation failed")
+		return
+	}
+	defer tx.Rollback()
+
+	err = h.checkCode(ctx, tx, email, codeErase, req.Code)
+	if errors.Is(err, errCodeInvalid) {
+		// Commit keeps the failed attempt counted.
+		if err := tx.Commit(); err != nil {
+			serverError(c, "Transaction commit failed")
+			return
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired code"})
+		return
+	}
+	if err != nil {
+		serverError(c, "Database error")
 		return
 	}
 
@@ -680,12 +757,6 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 		serverError(c, "Storage delete error")
 		return
 	}
-	tx, err := h.DB.BeginTx(ctx, nil)
-	if err != nil {
-		serverError(c, "Transaction initiation failed")
-		return
-	}
-	defer tx.Rollback()
 
 	var erasedKeys []string
 	steps := []func() error{
@@ -696,10 +767,6 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 		},
 		func() error { return setPasswordKeys(ctx, tx, userID, authHash, req.KeyMaterial) },
 		func() error { return h.setRecoveryKeys(ctx, tx, userID, req.RecoveryMaterial) },
-		func() error {
-			_, err := tx.ExecContext(ctx, `DELETE FROM user_challenges WHERE user_id = $1 AND kind = $2`, userID, challengeErase)
-			return err
-		},
 		func() error {
 			_, err := tx.ExecContext(ctx, `DELETE FROM user_sessions WHERE user_id = $1`, userID)
 			return err
@@ -714,17 +781,6 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 	h.respondWithSession(c, tx, userID, req.Device, http.StatusOK)
 	if c.Writer.Status() == http.StatusOK {
 		h.deleteObjects(erasedKeys)
-	}
-}
-
-// countFailedAttempt burns the code after maxEraseAttempts wrong guesses.
-func (h *Handler) countFailedAttempt(ctx context.Context, userID string, attempts int) {
-	query := `UPDATE user_challenges SET attempts = attempts + 1 WHERE user_id = $1 AND kind = $2`
-	if attempts+1 >= maxEraseAttempts {
-		query = `DELETE FROM user_challenges WHERE user_id = $1 AND kind = $2`
-	}
-	if _, err := h.DB.ExecContext(ctx, query, userID, challengeErase); err != nil {
-		log.Printf("erase attempt not recorded for %s: %v", userID, err)
 	}
 }
 

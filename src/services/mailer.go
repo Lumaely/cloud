@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/mail"
 )
 
 type Email struct {
@@ -32,11 +33,23 @@ func (m *LogMailer) Send(_ context.Context, e Email) error {
 	return nil
 }
 
-func NewMailer(driver, from string) (Mailer, error) {
-	switch driver {
+type MailConfig struct {
+	Driver, From, SecretKey, ProjectID, Region string
+}
+
+func NewMailer(cfg MailConfig) (Mailer, error) {
+	switch cfg.Driver {
 	case "", "log":
-		return &LogMailer{From: from}, nil
+		return &LogMailer{From: cfg.From}, nil
+	case "scaleway":
+		if cfg.SecretKey == "" || cfg.ProjectID == "" {
+			return nil, fmt.Errorf("MAIL_DRIVER scaleway needs SCW_SECRET_KEY and SCW_PROJECT_ID")
+		}
+		if _, err := mail.ParseAddress(cfg.From); err != nil {
+			return nil, fmt.Errorf("MAIL_DRIVER scaleway needs a valid sender: %w", err)
+		}
+		return &ScalewayMailer{From: cfg.From, SecretKey: cfg.SecretKey, ProjectID: cfg.ProjectID, Region: cfg.Region}, nil
 	default:
-		return nil, fmt.Errorf("unknown MAIL_DRIVER %q", driver)
+		return nil, fmt.Errorf("unknown MAIL_DRIVER %q", cfg.Driver)
 	}
 }
