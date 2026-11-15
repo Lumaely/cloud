@@ -1,0 +1,64 @@
+# Every email the server sends. Bodies and subjects are Go text/template:
+# {{.Code}}, {{.Time}} (UTC), {{.Device}} (may be empty), {{.SignedOutOthers}}.
+# Checked at startup; a change needs a rebuild.
+from: "Lumaely <no-reply@lumaely.app>"
+emails:
+  signup_code:
+    subject: "Your Lumaely sign-up code"
+    body: |-
+      Your Lumaely sign-up code is {{.Code}}.
+      It expires in 15 minutes. If you didn't ask for it, ignore this email.
+  account_exists:
+    subject: "You already have a Lumaely account"
+    body: |-
+      You already have a Lumaely account with this address. Sign in, or use your recovery key if you forgot your password.
+  erase_code:
+    subject: "Your Lumaely erase code"
+    body: |-
+      Your code to erase your Lumaely diary and start over is {{.Code}}.
+      It expires in 15 minutes. If you didn't ask for it, ignore this email.
+  sign_in:
+    subject: "New sign-in to your Lumaely account"
+    body: |-
+      Your Lumaely account was signed in to.
+      Time: {{.Time}}
+      {{if .Device}}Device: {{.Device}}
+      {{end}}
+      If this wasn't you, change your password and sign out all devices from Settings, then check your recovery key.
+  password_changed:
+    subject: "Your Lumaely password was changed"
+    body: |-
+      Your Lumaely password was changed.
+      Time: {{.Time}}
+      {{if .SignedOutOthers}}Your other devices were signed out.{{else}}Your other devices were not signed out.{{end}}
+
+      If this wasn't you, change your password and sign out all devices from Settings, then check your recovery key.
+  recovery_replaced:
+    subject: "Your Lumaely recovery key was replaced"
+    body: |-
+      Your Lumaely recovery key was replaced, along with your password.
+      Time: {{.Time}}
+
+      If this wasn't you, change your password and sign out all devices from Settings, then check your recovery key.
+  recovery_used:
+    subject: "Your Lumaely recovery key was used"
+    body: |-
+      Your recovery key was used to reset your password. All other devices were signed out.
+      Time: {{.Time}}
+      {{if .Device}}Device: {{.Device}}
+      {{end}}
+      If this wasn't you, change your password and sign out all devices from Settings, then check your recovery key.
+  signed_out_all:
+    subject: "All your Lumaely devices were signed out"
+    body: |-
+      Every device signed in to your Lumaely account was signed out.
+      Time: {{.Time}}
+
+      If this wasn't you, change your password and sign out all devices from Settings, then check your recovery key.
+  diary_reset:
+    subject: "Your Lumaely diary was erased"
+    body: |-
+      Every entry and file in your Lumaely diary was erased. Your account is kept.
+      Time: {{.Time}}
+
+      If this wasn't you, change your password and sign out all devices from Settings, then check your recovery key.

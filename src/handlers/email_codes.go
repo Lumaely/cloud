@@ -27,12 +27,12 @@ var errCodeInvalid = errors.New("invalid or expired code")
 
 // issueCode emails a fresh code for (email, kind) unless one was sent within codeResendWait
 // or codeDailyCap codes were sent in the current codeCapWindow.
-func (h *Handler) issueCode(ctx context.Context, email, kind string, compose func(code string) services.Email) error {
+func (h *Handler) issueCode(ctx context.Context, email, kind string, emailKind services.EmailKind) error {
 	code, err := h.claimCode(ctx, email, kind)
 	if err != nil || code == "" {
 		return err
 	}
-	return h.sendCode(ctx, email, kind, code, compose)
+	return h.sendCode(ctx, email, kind, code, emailKind)
 }
 
 // claimCode stores a fresh code for (email, kind) and returns it, or "" while the throttle or daily cap holds.
@@ -63,8 +63,11 @@ func (h *Handler) claimCode(ctx context.Context, email, kind string) (string, er
 }
 
 // sendCode emails a claimed code; on failure it releases the slot so an immediate retry sends.
-func (h *Handler) sendCode(ctx context.Context, email, kind, code string, compose func(code string) services.Email) error {
-	err := h.Mailer.Send(ctx, compose(code))
+func (h *Handler) sendCode(ctx context.Context, email, kind, code string, emailKind services.EmailKind) error {
+	e, err := h.Emails.Render(emailKind, email, services.EmailData{Code: code})
+	if err == nil {
+		err = h.Mailer.Send(ctx, e)
+	}
 	if err == nil {
 		return nil
 	}
@@ -120,11 +123,15 @@ func (h *Handler) codeHash(email, kind, code string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// notify sends e in the background; a failed notice never fails the request.
-func (h *Handler) notify(e services.Email) {
+// notify sends a notice in the background; a failed notice never fails the request.
+func (h *Handler) notify(kind services.EmailKind, to string, data services.EmailData) {
 	h.inBackground(func() {
-		if err := h.Mailer.Send(context.Background(), e); err != nil {
-			log.Printf("notice %q to %q failed: %v", e.Subject, e.To, err)
+		e, err := h.Emails.Render(kind, to, data)
+		if err == nil {
+			err = h.Mailer.Send(context.Background(), e)
+		}
+		if err != nil {
+			log.Printf("notice %s to %q failed: %v", kind, to, err)
 		}
 	})
 }

@@ -145,20 +145,11 @@ func (h *Handler) RegisterStart(c *gin.Context) {
 		return
 	}
 
-	err := h.issueCode(ctx, email, codeSignup, func(code string) services.Email {
-		if exists {
-			return services.Email{
-				To:      email,
-				Subject: "You already have a Lumaely account",
-				Body:    "You already have a Lumaely account with this address. Sign in, or use your recovery key if you forgot your password.",
-			}
-		}
-		return services.Email{
-			To:      email,
-			Subject: "Your Lumaely sign-up code",
-			Body:    fmt.Sprintf("Your Lumaely sign-up code is %s.\nIt expires in 15 minutes. If you didn't ask for it, ignore this email.", code),
-		}
-	})
+	emailKind := services.EmailSignupCode
+	if exists {
+		emailKind = services.EmailAccountExists
+	}
+	err := h.issueCode(ctx, email, codeSignup, emailKind)
 	if err != nil {
 		log.Printf("sign-up code email to %q failed: %v", email, err)
 		sendCodeFailed(c)
@@ -297,7 +288,7 @@ func (h *Handler) Login(c *gin.Context) {
 	defer tx.Rollback()
 	if h.respondWithSession(c, tx, userID, req.Device, http.StatusOK) {
 		if to := h.noticeAddress(ctx, userID); to != "" {
-			h.notify(noticeSignIn(to, req.Device, time.Now()))
+			h.notify(services.EmailSignIn, to, noticeData(req.Device))
 		}
 	}
 }
@@ -389,7 +380,7 @@ func (h *Handler) RecoverFinish(c *gin.Context) {
 	}
 	if h.respondWithSession(c, tx, userID, req.Device, http.StatusOK) {
 		if to := h.noticeAddress(ctx, userID); to != "" {
-			h.notify(noticeRecoveryUsed(to, req.Device, time.Now()))
+			h.notify(services.EmailRecoveryUsed, to, noticeData(req.Device))
 		}
 	}
 }
@@ -499,9 +490,11 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 	if to := h.noticeAddress(ctx, userID); to != "" {
 		if req.Recovery != nil {
-			h.notify(noticeRecoveryReplaced(to, time.Now()))
+			h.notify(services.EmailRecoveryReplaced, to, noticeData(nil))
 		} else {
-			h.notify(noticePasswordChanged(to, req.SignOutOtherDevices, time.Now()))
+			data := noticeData(nil)
+			data.SignedOutOthers = req.SignOutOtherDevices
+			h.notify(services.EmailPasswordChanged, to, data)
 		}
 	}
 }
@@ -515,7 +508,7 @@ func (h *Handler) SignOutAllDevices(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 	if to := h.noticeAddress(ctx, userID); to != "" {
-		h.notify(noticeSignedOutAll(to, time.Now()))
+		h.notify(services.EmailSignedOutAll, to, noticeData(nil))
 	}
 }
 
@@ -636,7 +629,7 @@ func (h *Handler) ResetDiary(c *gin.Context) {
 	h.deleteObjects(keys)
 	c.Status(http.StatusNoContent)
 	if to := h.noticeAddress(ctx, userID); to != "" {
-		h.notify(noticeDiaryReset(to, time.Now()))
+		h.notify(services.EmailDiaryReset, to, noticeData(nil))
 	}
 }
 
@@ -699,13 +692,7 @@ func (h *Handler) EraseRequest(c *gin.Context) {
 	if known && code != "" {
 		sendCtx := context.WithoutCancel(ctx)
 		h.inBackground(func() {
-			err := h.sendCode(sendCtx, email, codeErase, code, func(code string) services.Email {
-				return services.Email{
-					To:      email,
-					Subject: "Your Lumaely erase code",
-					Body:    fmt.Sprintf("Your code to erase your Lumaely diary and start over is %s.\nIt expires in 15 minutes. If you didn't ask for it, ignore this email.", code),
-				}
-			})
+			err := h.sendCode(sendCtx, email, codeErase, code, services.EmailEraseCode)
 			if err != nil {
 				log.Printf("erase code email to %q failed: %v", email, err)
 			}

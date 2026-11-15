@@ -25,7 +25,7 @@ func newTestRouter(t *testing.T, mode string) *gin.Engine {
 	}
 	t.Cleanup(func() { db.Close() })
 	auth := services.NewAuthService()
-	h := handlers.NewHandler(db, auth, nil, nil, handlers.Settings{Mode: mode})
+	h := handlers.NewHandler(db, auth, nil, nil, nil, handlers.Settings{Mode: mode})
 	r, err := NewRouter(h, db, auth, nil)
 	if err != nil {
 		t.Fatal(err)

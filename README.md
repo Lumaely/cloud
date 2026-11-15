@@ -110,7 +110,8 @@ src/scripts/start_prod 1.2.0
 1. Buy the domain.
 2. Create the Scaleway account and add the sending domain in Transactional Email (e.g. `mail.<domain>`).
 3. Publish the SPF, DKIM and DMARC records Scaleway gives, then wait until Scaleway shows the domain as verified.
-4. In `.env`, set `MAIL_DRIVER=scaleway`, `MAIL_FROM` (an address on the sending domain) and `SCW_SECRET_KEY`, `SCW_PROJECT_ID`, `SCW_REGION`.
+4. In `src/services/emails.yaml`, set `from` to an address on the sending domain, then rebuild.
+5. In `.env`, set `MAIL_DRIVER=scaleway` and `SCW_SECRET_KEY`, `SCW_PROJECT_ID`, `SCW_REGION`.
 
 ### `apply_migration [--dev | --prod | --local] [--status | TARGET]`
 
@@ -184,10 +185,14 @@ Set in `.env` (see `.env.sample`). Compose sets `DB_HOST`, `DB_PORT` and `MINIO_
 | `SERVER_MODE` | `cloud` | `cloud` or `self-hosted` (no email routes, no quota). |
 | `SERVER_SECRET` | random per start | Keeps fake login salts stable and keys emailed-code hashes; required in production. |
 | `STORAGE_QUOTA_BYTES` | 5 GiB in cloud mode, 0 (unlimited) in self-hosted | Per-account file quota. Previews are not counted; each is at most 256 KiB and, when the quota is not 0, at most the size of its file. |
-| `MAIL_DRIVER`, `MAIL_FROM` | `log`, `Lumaely <no-reply@lumaely.app>` | Email sending; `log` writes emails to the server log, `scaleway` sends through Scaleway Transactional Email and needs a valid `MAIL_FROM` address, checked at startup. |
+| `MAIL_DRIVER` | `log` | Email sending; `log` writes emails to the server log, `scaleway` sends through Scaleway Transactional Email. |
 | `SCW_SECRET_KEY`, `SCW_PROJECT_ID`, `SCW_REGION` | empty, empty, `fr-par` | Scaleway credentials; required when `MAIL_DRIVER=scaleway`. |
 | `TRUSTED_PROXIES` | none | Proxy IPs/CIDRs, so rate limits see client IPs. |
 | `MIGRATIONS_DIR` | empty (built-in) | Folder of migrations to use instead of the built-in ones. Host only (`--local`, tests): Compose blanks it in containers. |
+
+### Email content
+
+Every email's sender (`from`), subject and body live in `src/services/emails.yaml`, compiled into the binary. Edit them there, never in handlers. The server checks the file at startup and refuses to start when it is invalid. A change needs a rebuild.
 
 ## Server commands
 

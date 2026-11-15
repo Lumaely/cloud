@@ -8,10 +8,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -130,7 +131,7 @@ func TestCodeHashIsKeyedAndBound(t *testing.T) {
 	}
 }
 
-func TestDeviceLine(t *testing.T) {
+func TestDeviceLabel(t *testing.T) {
 	for _, tc := range []struct {
 		d    *models.Device
 		want string
@@ -138,30 +139,55 @@ func TestDeviceLine(t *testing.T) {
 		{nil, ""},
 		{&models.Device{}, ""},
 		{&models.Device{Name: " ", Platform: " "}, ""},
-		{&models.Device{Name: "Mac", Platform: "macos"}, "Device: Mac (macos)\n"},
-		{&models.Device{Name: "Mac"}, "Device: Mac\n"},
-		{&models.Device{Platform: "android"}, "Device: android\n"},
+		{&models.Device{Name: "Mac", Platform: "macos"}, "Mac (macos)"},
+		{&models.Device{Name: "Mac"}, "Mac"},
+		{&models.Device{Platform: "android"}, "android"},
 	} {
-		if got := deviceLine(tc.d); got != tc.want {
-			t.Errorf("deviceLine(%+v) = %q, want %q", tc.d, got, tc.want)
+		if got := deviceLabel(tc.d); got != tc.want {
+			t.Errorf("deviceLabel(%+v) = %q, want %q", tc.d, got, tc.want)
 		}
 	}
 }
 
 func TestNoticeBodiesHaveNoDoubledBlankLines(t *testing.T) {
-	at := time.Now()
-	for _, e := range []services.Email{
-		noticeSignIn("a", nil, at),
-		noticeSignIn("a", &models.Device{Name: "Mac"}, at),
-		noticePasswordChanged("a", true, at),
-		noticeRecoveryReplaced("a", at),
-		noticeRecoveryUsed("a", nil, at),
-		noticeRecoveryUsed("a", &models.Device{Platform: "ios"}, at),
-		noticeSignedOutAll("a", at),
-		noticeDiaryReset("a", at),
-	} {
-		if strings.Contains(e.Body, "\n\n\n") || strings.Contains(e.Body, "()") {
-			t.Errorf("%q body: %q", e.Subject, e.Body)
+	emails, err := services.LoadEmailCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	notices := []services.EmailKind{
+		services.EmailSignIn, services.EmailPasswordChanged, services.EmailRecoveryReplaced,
+		services.EmailRecoveryUsed, services.EmailSignedOutAll, services.EmailDiaryReset,
+	}
+	for _, kind := range notices {
+		for _, d := range []*models.Device{nil, {Name: "Mac"}, {Platform: "ios"}} {
+			e, err := emails.Render(kind, "a", noticeData(d))
+			if err != nil {
+				t.Fatalf("%s: %v", kind, err)
+			}
+			if strings.Contains(e.Body, "\n\n\n") || strings.Contains(e.Body, "()") {
+				t.Errorf("%s body: %q", kind, e.Body)
+			}
+		}
+	}
+}
+
+func TestHandlersWriteNoEmailText(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, banned := range []string{"Subject:", "Body:", "services.Email{"} {
+			if strings.Contains(string(src), banned) {
+				t.Errorf("%s contains %q; email text belongs in services/emails.yaml", f, banned)
+			}
 		}
 	}
 }

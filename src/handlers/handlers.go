@@ -27,16 +27,18 @@ type Handler struct {
 	Auth     *services.AuthService
 	Storage  services.BlobStorage
 	Mailer   services.Mailer
+	Emails   *services.EmailCatalog
 	Settings Settings
 	notices  sync.WaitGroup
 }
 
-func NewHandler(db *sql.DB, auth *services.AuthService, storage services.BlobStorage, mailer services.Mailer, settings Settings) *Handler {
+func NewHandler(db *sql.DB, auth *services.AuthService, storage services.BlobStorage, mailer services.Mailer, emails *services.EmailCatalog, settings Settings) *Handler {
 	return &Handler{
 		DB:       db,
 		Auth:     auth,
 		Storage:  storage,
 		Mailer:   mailer,
+		Emails:   emails,
 		Settings: settings,
 	}
 }

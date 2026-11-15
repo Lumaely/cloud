@@ -33,7 +33,7 @@ type scalewayEmail struct {
 func (m *ScalewayMailer) Send(ctx context.Context, e Email) error {
 	from, err := mail.ParseAddress(m.From)
 	if err != nil {
-		return fmt.Errorf("invalid MAIL_FROM: %w", err)
+		return fmt.Errorf("invalid sender: %w", err)
 	}
 	body, err := json.Marshal(scalewayEmail{
 		From:      scalewayAddress{Email: from.Address, Name: from.Name},

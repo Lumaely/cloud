@@ -143,7 +143,11 @@ func newStackMode(t *testing.T, quota int64, mode string) *stack {
 
 	mailer := &recordingMailer{}
 	auth := services.NewAuthService()
-	h := handlers.NewHandler(db, auth, storage, mailer, handlers.Settings{
+	emails, err := services.LoadEmailCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := handlers.NewHandler(db, auth, storage, mailer, emails, handlers.Settings{
 		Version: "test", Mode: mode, StorageQuota: quota, ServerSecret: []byte("test-secret"),
 	})
 	router, err := app.NewRouter(h, db, auth, nil)

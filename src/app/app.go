@@ -63,13 +63,18 @@ func serve(version string) error {
 		return fmt.Errorf("object storage init error: %w", err)
 	}
 
+	emails, err := services.LoadEmailCatalog()
+	if err != nil {
+		return err
+	}
+	cfg.Mail.From = emails.From
 	mailer, err := services.NewMailer(cfg.Mail)
 	if err != nil {
 		return err
 	}
 
 	authService := services.NewAuthService()
-	h := handlers.NewHandler(db, authService, storage, mailer, handlers.Settings{
+	h := handlers.NewHandler(db, authService, storage, mailer, emails, handlers.Settings{
 		Version:      version,
 		Mode:         cfg.Mode,
 		StorageQuota: cfg.StorageQuota,

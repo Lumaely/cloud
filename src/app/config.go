@@ -41,7 +41,6 @@ func loadConfig() (Config, error) {
 		ServerSecret:  os.Getenv("SERVER_SECRET"),
 		Mail: services.MailConfig{
 			Driver:    getEnv("MAIL_DRIVER", "log"),
-			From:      getEnv("MAIL_FROM", "Lumaely <no-reply@lumaely.app>"),
 			SecretKey: os.Getenv("SCW_SECRET_KEY"),
 			ProjectID: os.Getenv("SCW_PROJECT_ID"),
 			Region:    getEnv("SCW_REGION", "fr-par"),
