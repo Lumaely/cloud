@@ -7,7 +7,6 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -28,9 +27,8 @@ const (
 	sessionTTL         = 60 * 24 * time.Hour
 	maxSessionsPerUser = 50
 	challengeTTL       = 15 * time.Minute
-	maxEraseAttempts   = 5
+	maxCodeAttempts    = 5
 	challengeRecovery  = "recovery"
-	challengeErase     = "erase"
 	defaultKDFParams   = `{"alg":"argon2id","m":65536,"t":3,"p":1}`
 	userColumns        = `user_id, email, diary_epoch, created_at`
 	keyBundleColumns   = `kdf_salt, kdf_params, wrapped_key_password, wrapped_key_recovery`
@@ -604,8 +602,7 @@ func (h *Handler) EraseRequest(c *gin.Context) {
 	ctx := c.Request.Context()
 	email := normalizeEmail(req.Email)
 
-	var userID string
-	err := h.DB.QueryRowContext(ctx, `SELECT user_id FROM users WHERE email = $1`, email).Scan(&userID)
+	err := h.DB.QueryRowContext(ctx, `SELECT 1 FROM users WHERE email = $1`, email).Scan(new(int))
 	if errors.Is(err, sql.ErrNoRows) {
 		c.Status(http.StatusAccepted)
 		return
@@ -615,23 +612,16 @@ func (h *Handler) EraseRequest(c *gin.Context) {
 		return
 	}
 
-	code, err := randomDigits(6)
-	if err != nil {
-		serverError(c, "Failed to create code")
-		return
-	}
-	if err := storeChallenge(ctx, h.DB, userID, challengeErase, code); err != nil {
-		serverError(c, "Database error")
-		return
-	}
-	err = h.Mailer.Send(ctx, services.Email{
-		To:      email,
-		Subject: "Your Lumaely erase code",
-		Body:    fmt.Sprintf("Your code to erase your Lumaely diary and start over is %s.\nIt expires in 15 minutes. If you didn't ask for it, ignore this email.", code),
+	err = h.issueCode(ctx, email, codeErase, func(code string) services.Email {
+		return services.Email{
+			To:      email,
+			Subject: "Your Lumaely erase code",
+			Body:    fmt.Sprintf("Your code to erase your Lumaely diary and start over is %s.\nIt expires in 15 minutes. If you didn't ask for it, ignore this email.", code),
+		}
 	})
 	if err != nil {
 		log.Printf("erase code email to %q failed: %v", email, err)
-		serverError(c, "Failed to send email")
+		sendCodeFailed(c)
 		return
 	}
 	c.Status(http.StatusAccepted)
@@ -650,13 +640,8 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 	ctx := c.Request.Context()
 	email := normalizeEmail(req.Email)
 
-	var userID, secretHash string
-	var attempts int
-	err := h.DB.QueryRowContext(ctx, `
-		SELECT u.user_id, ch.secret_hash, ch.attempts
-		FROM users u JOIN user_challenges ch ON ch.user_id = u.user_id
-		WHERE u.email = $1 AND ch.kind = $2 AND ch.expires_at > NOW()
-	`, email, challengeErase).Scan(&userID, &secretHash, &attempts)
+	var userID string
+	err := h.DB.QueryRowContext(ctx, `SELECT user_id FROM users WHERE email = $1`, email).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired code"})
 		return
@@ -665,9 +650,27 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 		serverError(c, "Database error")
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(hashSecret(req.Code)), []byte(secretHash)) != 1 {
-		h.countFailedAttempt(ctx, userID, attempts)
+
+	// The code is consumed inside tx: a later failure rolls back and leaves it usable.
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		serverError(c, "Transaction initiation failed")
+		return
+	}
+	defer tx.Rollback()
+
+	err = h.checkCode(ctx, tx, email, codeErase, req.Code)
+	if errors.Is(err, errCodeInvalid) {
+		// Commit keeps the failed attempt counted.
+		if err := tx.Commit(); err != nil {
+			serverError(c, "Transaction commit failed")
+			return
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired code"})
+		return
+	}
+	if err != nil {
+		serverError(c, "Database error")
 		return
 	}
 
@@ -680,12 +683,6 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 		serverError(c, "Storage delete error")
 		return
 	}
-	tx, err := h.DB.BeginTx(ctx, nil)
-	if err != nil {
-		serverError(c, "Transaction initiation failed")
-		return
-	}
-	defer tx.Rollback()
 
 	var erasedKeys []string
 	steps := []func() error{
@@ -696,10 +693,6 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 		},
 		func() error { return setPasswordKeys(ctx, tx, userID, authHash, req.KeyMaterial) },
 		func() error { return h.setRecoveryKeys(ctx, tx, userID, req.RecoveryMaterial) },
-		func() error {
-			_, err := tx.ExecContext(ctx, `DELETE FROM user_challenges WHERE user_id = $1 AND kind = $2`, userID, challengeErase)
-			return err
-		},
 		func() error {
 			_, err := tx.ExecContext(ctx, `DELETE FROM user_sessions WHERE user_id = $1`, userID)
 			return err
@@ -714,17 +707,6 @@ func (h *Handler) EraseConfirm(c *gin.Context) {
 	h.respondWithSession(c, tx, userID, req.Device, http.StatusOK)
 	if c.Writer.Status() == http.StatusOK {
 		h.deleteObjects(erasedKeys)
-	}
-}
-
-// countFailedAttempt burns the code after maxEraseAttempts wrong guesses.
-func (h *Handler) countFailedAttempt(ctx context.Context, userID string, attempts int) {
-	query := `UPDATE user_challenges SET attempts = attempts + 1 WHERE user_id = $1 AND kind = $2`
-	if attempts+1 >= maxEraseAttempts {
-		query = `DELETE FROM user_challenges WHERE user_id = $1 AND kind = $2`
-	}
-	if _, err := h.DB.ExecContext(ctx, query, userID, challengeErase); err != nil {
-		log.Printf("erase attempt not recorded for %s: %v", userID, err)
 	}
 }
 

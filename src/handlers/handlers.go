@@ -4,6 +4,7 @@ import (
 	"cloud/src/services"
 	"database/sql"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,6 +28,7 @@ type Handler struct {
 	Storage  services.BlobStorage
 	Mailer   services.Mailer
 	Settings Settings
+	notices  sync.WaitGroup
 }
 
 func NewHandler(db *sql.DB, auth *services.AuthService, storage services.BlobStorage, mailer services.Mailer, settings Settings) *Handler {

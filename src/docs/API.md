@@ -63,7 +63,7 @@ Returned by register, login, recovery and `GET /users/me/keys`.
 | `DELETE /users/me/diary` | | 204. Erases every record and file. Keeps the account. Increments `diary_epoch`. |
 | `DELETE /users/me` | | 204. Deletes the account and its files. |
 | `GET /users/me/storage` | | `{used_bytes, quota_bytes}`. `used_bytes` counts files, not previews. `quota_bytes` is 0 when unlimited. |
-| `POST /users/erase/request` | `{email}` | 202 always. Emails a 6-digit code valid 15 min when the account exists. |
+| `POST /users/erase/request` | `{email}` | 202, also for an unknown address. Emails a 6-digit code valid 15 min when the account exists. A request within 60 s of the last sent code sends nothing and keeps that code. 503 `{"error": "Failed to send email"}` when the email fails; retry at once. |
 | `POST /users/erase/confirm` | `{email, code, device?}` + register key fields | 200 `{token, user, keys}`. Erases the diary, replaces the keys, signs out every device. 401 wrong or expired code; 5 wrong codes burn it. |
 
 ### Devices

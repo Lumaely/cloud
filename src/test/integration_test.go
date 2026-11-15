@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,14 +30,30 @@ import (
 
 type recordingMailer struct {
 	mu     sync.Mutex
+	fail   bool
 	emails []services.Email
 }
 
 func (m *recordingMailer) Send(_ context.Context, e services.Email) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fail {
+		return errors.New("mailer down")
+	}
 	m.emails = append(m.emails, e)
 	return nil
+}
+
+func (m *recordingMailer) setFail(fail bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fail = fail
+}
+
+func (m *recordingMailer) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.emails)
 }
 
 func (m *recordingMailer) lastCode(t *testing.T) string {
@@ -61,6 +78,7 @@ type stack struct {
 	s3     *minio.Client
 	bucket string
 	mailer *recordingMailer
+	h      *handlers.Handler
 }
 
 // Needs TEST_DATABASE_URL and MINIO_TEST_*; recreates the public schema of that database, then migrates it.
@@ -121,7 +139,7 @@ func newStack(t *testing.T, quota int64) *stack {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &stack{t: t, db: db, router: router, s3: client, bucket: cfg.Bucket, mailer: mailer}
+	return &stack{t: t, db: db, router: router, s3: client, bucket: cfg.Bucket, mailer: mailer, h: h}
 }
 
 func (s *stack) do(method, path, token string, body any) *httptest.ResponseRecorder {
@@ -366,7 +384,7 @@ func TestIntegrationEraseAndStartOver(t *testing.T) {
 	expect(t, s.upload(a.token, "/attachments/"+uuidV7(t), "x"), http.StatusCreated)
 
 	expect(t, s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": "ghost@test.local"}), http.StatusAccepted)
-	if len(s.mailer.emails) != 0 {
+	if s.mailer.count() != 0 {
 		t.Fatal("email sent for unknown account")
 	}
 	expect(t, s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": a.email}), http.StatusAccepted)
@@ -409,6 +427,64 @@ func TestIntegrationEraseCodeBurnsAfterFiveFailures(t *testing.T) {
 	}
 	confirm["code"] = code
 	expect(t, s.do(http.MethodPost, "/users/erase/confirm", "", confirm), http.StatusUnauthorized)
+}
+
+func TestIntegrationEraseRequestThrottle(t *testing.T) {
+	s := newStack(t, 0)
+	s.register("throttle@test.local")
+	request := func(email string) *httptest.ResponseRecorder {
+		return s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": email})
+	}
+
+	expect(t, request("THROTTLE@test.local"), http.StatusAccepted)
+	expect(t, request("Throttle@Test.local"), http.StatusAccepted)
+	expect(t, request("throttle@test.local"), http.StatusAccepted)
+	if n := s.mailer.count(); n != 1 {
+		t.Fatalf("emails within 60 s = %d, want 1", n)
+	}
+
+	if _, err := s.db.Exec(`UPDATE email_codes SET sent_at = NOW() - INTERVAL '61 seconds'`); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, request("throttle@test.local"), http.StatusAccepted)
+	if n := s.mailer.count(); n != 2 {
+		t.Errorf("emails after 60 s = %d, want 2", n)
+	}
+}
+
+func TestIntegrationEraseRequestThrottleConcurrent(t *testing.T) {
+	s := newStack(t, 0)
+	a := s.register("race@test.local")
+
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Go(func() {
+			s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": a.email})
+		})
+	}
+	wg.Wait()
+	if n := s.mailer.count(); n != 1 {
+		t.Errorf("concurrent requests sent %d emails, want 1", n)
+	}
+}
+
+func TestIntegrationEraseRequestSendFailure(t *testing.T) {
+	s := newStack(t, 0)
+	a := s.register("fail@test.local")
+	request := map[string]string{"email": a.email}
+
+	s.mailer.setFail(true)
+	w := s.do(http.MethodPost, "/users/erase/request", "", request)
+	expect(t, w, http.StatusServiceUnavailable)
+	if got := decode[map[string]string](t, w)["error"]; got != "Failed to send email" {
+		t.Errorf("error = %q", got)
+	}
+
+	s.mailer.setFail(false)
+	expect(t, s.do(http.MethodPost, "/users/erase/request", "", request), http.StatusAccepted)
+	confirm := s.keyFields(&account{email: a.email, authKey: randomBytes(t, 32), recoveryKey: randomBytes(t, 32)})
+	confirm["code"] = s.mailer.lastCode(t)
+	expect(t, s.do(http.MethodPost, "/users/erase/confirm", "", confirm), http.StatusOK)
 }
 
 func TestIntegrationDeleteUserRemovesObjects(t *testing.T) {

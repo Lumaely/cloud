@@ -179,7 +179,7 @@ paths:
   /users/erase/request:
     post:
       operationId: eraseRequest
-      description: Cloud mode only. Always 202; emails a 6-digit code valid 15 minutes when the account exists.
+      description: Cloud mode only. 202 also for an unknown address; emails a 6-digit code valid 15 minutes when the account exists. Within 60 s of the last sent code, sends nothing and keeps that code.
       security: []
       requestBody:
         required: true
@@ -194,6 +194,7 @@ paths:
         "202": { description: Accepted. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/EmailFailed" }
 
   /users/erase/confirm:
     post:
@@ -521,6 +522,11 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     TooManyRequests:
       description: Rate limit reached.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    EmailFailed:
+      description: The email was not sent (`Failed to send email`); retry at once.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
