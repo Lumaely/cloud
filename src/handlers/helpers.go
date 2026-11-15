@@ -32,6 +32,7 @@ type queryer interface {
 
 // nextSeq allocates the user's next change number; its row lock serializes the user's writes,
 // so it must be the first statement of every write transaction.
+// Exception: a transaction that checks an emailed code locks the email_codes row before users.
 func nextSeq(ctx context.Context, tx *sql.Tx, userID string) (int64, error) {
 	var seq int64
 	err := tx.QueryRowContext(ctx, `UPDATE users SET change_seq = change_seq + 1 WHERE user_id = $1 RETURNING change_seq`, userID).Scan(&seq)

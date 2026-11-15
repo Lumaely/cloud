@@ -53,7 +53,7 @@ paths:
   /users/register/start:
     post:
       operationId: registerStart
-      description: Cloud mode only. 202 also for an address that already has an account, which gets an "already have an account" notice with no code; a new address gets a 6-digit code valid 15 minutes. Within 60 s of the last one, sends nothing and keeps that code.
+      description: Cloud mode only. 202 also for an address that already has an account, which gets an "already have an account" notice with no code; a new address gets a 6-digit code valid 15 minutes. Within 60 s of the last one, or past 10 codes sent to the address in 24 hours, sends nothing and keeps that code.
       security: []
       requestBody:
         required: true
@@ -202,7 +202,7 @@ paths:
   /users/erase/request:
     post:
       operationId: eraseRequest
-      description: Cloud mode only. 202 also for an unknown address; emails a 6-digit code valid 15 minutes when the account exists. Within 60 s of the last sent code, sends nothing and keeps that code.
+      description: Cloud mode only. 202 also for an unknown address; emails a 6-digit code valid 15 minutes when the account exists. Within 60 s of the last sent code, or past 10 codes sent in 24 hours, sends nothing and keeps that code.
       security: []
       requestBody:
         required: true
@@ -274,7 +274,7 @@ paths:
   /users/me/delete/request:
     post:
       operationId: deleteRequest
-      description: Cloud mode only. Emails a 6-digit code valid 15 minutes to the account address. Within 60 s of the last sent code, sends nothing and keeps that code.
+      description: Cloud mode only. Emails a 6-digit code valid 15 minutes to the account address. Within 60 s of the last sent code, or past 10 codes sent in 24 hours, sends nothing and keeps that code.
       responses:
         "202": { description: Accepted. }
         "401": { $ref: "#/components/responses/Error" }

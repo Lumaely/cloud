@@ -477,6 +477,90 @@ func TestIntegrationEraseRequestThrottle(t *testing.T) {
 	}
 }
 
+func TestIntegrationBurnedCodeKeepsThrottle(t *testing.T) {
+	s := newStack(t, 0)
+	a := s.register("burnwait@test.local")
+	request := func() {
+		expect(t, s.do(http.MethodPost, "/users/erase/request", "", map[string]string{"email": a.email}), http.StatusAccepted)
+	}
+	confirm := s.keyFields(&account{email: a.email, authKey: randomBytes(t, 32), recoveryKey: randomBytes(t, 32)})
+
+	request()
+	confirm["code"] = "000000"
+	for range 5 {
+		expect(t, s.do(http.MethodPost, "/users/erase/confirm", "", confirm), http.StatusUnauthorized)
+	}
+	request()
+	if n := s.mailer.count(); n != 1 {
+		t.Fatalf("emails after burn within 60 s = %d, want 1", n)
+	}
+
+	if _, err := s.db.Exec(`UPDATE email_codes SET sent_at = NOW() - INTERVAL '61 seconds'`); err != nil {
+		t.Fatal(err)
+	}
+	request()
+	if n := s.mailer.count(); n != 2 {
+		t.Fatalf("emails after 60 s = %d, want 2", n)
+	}
+	confirm["code"] = s.mailer.lastCode(t)
+	expect(t, s.do(http.MethodPost, "/users/erase/confirm", "", confirm), http.StatusOK)
+}
+
+func TestIntegrationCodeDailyCap(t *testing.T) {
+	s := newStack(t, 0)
+	request := func() {
+		expect(t, s.do(http.MethodPost, "/users/register/start", "", map[string]string{"email": "cap@test.local"}), http.StatusAccepted)
+	}
+	exec := func(query string) {
+		if _, err := s.db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	emails := func(want int) {
+		t.Helper()
+		if n := s.mailer.count(); n != want {
+			t.Fatalf("emails = %d, want %d", n, want)
+		}
+	}
+
+	request()
+	emails(1)
+	exec(`UPDATE email_codes SET sent_at = NOW() - INTERVAL '61 seconds', window_count = 9`)
+	request()
+	emails(2)
+	exec(`UPDATE email_codes SET sent_at = NOW() - INTERVAL '61 seconds'`)
+	request()
+	emails(2)
+
+	exec(`UPDATE email_codes SET window_start = NOW() - INTERVAL '24 hours 1 second'`)
+	request()
+	emails(3)
+}
+
+func TestIntegrationCapIgnoresFailedSends(t *testing.T) {
+	s := newStack(t, 0)
+	request := func() *httptest.ResponseRecorder {
+		return s.do(http.MethodPost, "/users/register/start", "", map[string]string{"email": "fail@test.local"})
+	}
+	windowCount := func() (n int) {
+		if err := s.db.QueryRow(`SELECT window_count FROM email_codes WHERE email = 'fail@test.local'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	s.mailer.setFail(true)
+	expect(t, request(), http.StatusServiceUnavailable)
+	if n := windowCount(); n != 0 {
+		t.Fatalf("window_count after failed send = %d, want 0", n)
+	}
+	s.mailer.setFail(false)
+	expect(t, request(), http.StatusAccepted)
+	if n := windowCount(); n != 1 {
+		t.Errorf("window_count after sent code = %d, want 1", n)
+	}
+}
+
 func TestIntegrationEraseRequestThrottleConcurrent(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("race@test.local")
@@ -678,6 +762,20 @@ func TestIntegrationRegisterCode(t *testing.T) {
 	good := fields("b@test.local", codeB)
 	expect(t, register(good), http.StatusCreated)
 	expect(t, register(good), http.StatusUnauthorized)
+}
+
+func TestIntegrationRegisterCodeBurnsAfterFiveFailures(t *testing.T) {
+	s := newStack(t, 0)
+	expect(t, s.do(http.MethodPost, "/users/register/start", "", map[string]string{"email": "burn@test.local"}), http.StatusAccepted)
+	f := s.keyFields(&account{email: "burn@test.local", authKey: randomBytes(t, 32), recoveryKey: randomBytes(t, 32)})
+	code := s.mailer.lastCode(t)
+
+	f["code"] = "000000"
+	for range 5 {
+		expect(t, s.do(http.MethodPost, "/users/register", "", f), http.StatusUnauthorized)
+	}
+	f["code"] = code
+	expect(t, s.do(http.MethodPost, "/users/register", "", f), http.StatusUnauthorized)
 }
 
 func TestIntegrationSelfHostedRegisterNeedsNoCode(t *testing.T) {

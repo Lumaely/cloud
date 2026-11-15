@@ -107,6 +107,27 @@ func TestValidateRecoveryMaterial(t *testing.T) {
 	}
 }
 
+func TestCodeHashIsKeyedAndBound(t *testing.T) {
+	h := &Handler{Settings: Settings{ServerSecret: []byte("secret")}}
+	other := &Handler{Settings: Settings{ServerSecret: []byte("other")}}
+
+	a := h.codeHash("a@b.c", codeErase, "123456")
+	if len(a) != 64 || a != h.codeHash("a@b.c", codeErase, "123456") {
+		t.Fatalf("hash %q not stable or wrong size", a)
+	}
+	for name, b := range map[string]string{
+		"plain sha256": hashSecret("123456"),
+		"secret":       other.codeHash("a@b.c", codeErase, "123456"),
+		"email":        h.codeHash("x@b.c", codeErase, "123456"),
+		"kind":         h.codeHash("a@b.c", codeDelete, "123456"),
+		"code":         h.codeHash("a@b.c", codeErase, "654321"),
+	} {
+		if a == b {
+			t.Errorf("hash does not depend on %s", name)
+		}
+	}
+}
+
 func TestFakeSaltIsStablePerEmailAndSecret(t *testing.T) {
 	h := &Handler{Settings: Settings{ServerSecret: []byte("secret")}}
 	other := &Handler{Settings: Settings{ServerSecret: []byte("other")}}

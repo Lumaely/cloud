@@ -45,11 +45,15 @@ CREATE TABLE IF NOT EXISTS user_challenges (
 CREATE TABLE IF NOT EXISTS email_codes (
     email TEXT NOT NULL,
     kind TEXT NOT NULL,
-    secret_hash VARCHAR(64) NOT NULL,
+    -- HMAC of the code; NULL once burned by too many wrong guesses.
+    secret_hash VARCHAR(64) NULL,
     attempts INT NOT NULL DEFAULT 0,
     expires_at TIMESTAMPTZ NOT NULL,
     -- Set when a send slot is claimed, reset to NULL after a failed send; drives the 60 s resend throttle.
     sent_at TIMESTAMPTZ NULL,
+    -- Fixed 24 h window capping codes sent per (email, kind).
+    window_start TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    window_count INT NOT NULL DEFAULT 0,
     PRIMARY KEY (email, kind)
 );
 
