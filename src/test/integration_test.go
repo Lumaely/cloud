@@ -688,3 +688,9 @@ func TestIntegrationSelfHostedRegisterNeedsNoCode(t *testing.T) {
 		t.Error("self-hosted register sent an email")
 	}
 }
+
+func (m *recordingMailer) sent() []services.Email {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]services.Email(nil), m.emails...)
+}

@@ -68,6 +68,8 @@ Returned by register, login, recovery and `GET /users/me/keys`.
 | `POST /users/erase/request` | `{email}` | 202, also for an unknown address. Emails a 6-digit code valid 15 min when the account exists. A request within 60 s of the last sent code sends nothing and keeps that code. 503 `{"error": "Failed to send email"}` when the email fails; retry at once. |
 | `POST /users/erase/confirm` | `{email, code, device?}` + register key fields | 200 `{token, user, keys}`. Erases the diary, replaces the keys, signs out every device. 401 wrong or expired code; 5 wrong codes burn it. |
 
+Cloud mode emails a plain-text security notice to the account address after a sign-in, password change, recovery key replaced or used, sign-out of all devices, and diary erase. It never blocks the request. Registration, erase, account deletion and single-device sign-out send none.
+
 ### Devices
 
 Register, login, recovery finish and erase confirm each open one session. `device` names it; both fields are optional, at most 64 characters each, else 400. The server can read them: send a model name, never the user's name.

@@ -108,23 +108,25 @@ func loadAccount(ctx context.Context, q queryer, userID string) (models.User, mo
 }
 
 // respondWithSession opens a session inside tx, commits, and returns token, user and keys.
-func (h *Handler) respondWithSession(c *gin.Context, tx *sql.Tx, userID string, device *models.Device, status int) {
+// It reports whether the response was sent.
+func (h *Handler) respondWithSession(c *gin.Context, tx *sql.Tx, userID string, device *models.Device, status int) bool {
 	ctx := c.Request.Context()
 	token, err := h.createSession(ctx, tx, userID, device)
 	if err != nil {
 		serverError(c, "Failed to create session")
-		return
+		return false
 	}
 	user, keys, err := loadAccount(ctx, tx, userID)
 	if err != nil {
 		serverError(c, "Database error")
-		return
+		return false
 	}
 	if err := tx.Commit(); err != nil {
 		serverError(c, "Transaction commit failed")
-		return
+		return false
 	}
 	c.JSON(status, models.AuthResponse{Token: token, User: user, Keys: keys})
+	return true
 }
 
 // RegisterStart answers 202 for known and unknown addresses alike; both send before answering.
@@ -293,7 +295,11 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 	defer tx.Rollback()
-	h.respondWithSession(c, tx, userID, req.Device, http.StatusOK)
+	if h.respondWithSession(c, tx, userID, req.Device, http.StatusOK) {
+		if to := h.noticeAddress(ctx, userID); to != "" {
+			h.notify(noticeSignIn(to, req.Device, time.Now()))
+		}
+	}
 }
 
 func (h *Handler) RecoverStart(c *gin.Context) {
@@ -381,7 +387,11 @@ func (h *Handler) RecoverFinish(c *gin.Context) {
 		serverError(c, "Database error")
 		return
 	}
-	h.respondWithSession(c, tx, userID, req.Device, http.StatusOK)
+	if h.respondWithSession(c, tx, userID, req.Device, http.StatusOK) {
+		if to := h.noticeAddress(ctx, userID); to != "" {
+			h.notify(noticeRecoveryUsed(to, req.Device, time.Now()))
+		}
+	}
 }
 
 func setPasswordKeys(ctx context.Context, q queryer, userID, authHash string, k models.KeyMaterial) error {
@@ -487,14 +497,26 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+	if to := h.noticeAddress(ctx, userID); to != "" {
+		if req.Recovery != nil {
+			h.notify(noticeRecoveryReplaced(to, time.Now()))
+		} else {
+			h.notify(noticePasswordChanged(to, req.SignOutOtherDevices, time.Now()))
+		}
+	}
 }
 
 func (h *Handler) SignOutAllDevices(c *gin.Context) {
-	if _, err := h.DB.ExecContext(c.Request.Context(), `DELETE FROM user_sessions WHERE user_id = $1`, c.GetString("userID")); err != nil {
+	ctx := c.Request.Context()
+	userID := c.GetString("userID")
+	if _, err := h.DB.ExecContext(ctx, `DELETE FROM user_sessions WHERE user_id = $1`, userID); err != nil {
 		serverError(c, "Database error")
 		return
 	}
 	c.Status(http.StatusNoContent)
+	if to := h.noticeAddress(ctx, userID); to != "" {
+		h.notify(noticeSignedOutAll(to, time.Now()))
+	}
 }
 
 func (h *Handler) ListSessions(c *gin.Context) {
@@ -689,6 +711,9 @@ func (h *Handler) ResetDiary(c *gin.Context) {
 	}
 	h.deleteObjects(keys)
 	c.Status(http.StatusNoContent)
+	if to := h.noticeAddress(ctx, userID); to != "" {
+		h.notify(noticeDiaryReset(to, time.Now()))
+	}
 }
 
 // eraseDiaryRows deletes every diary row and bumps diary_epoch so other devices drop their copy.
