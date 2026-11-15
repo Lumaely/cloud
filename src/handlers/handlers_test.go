@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"cloud/src/models"
+	"cloud/src/services"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -124,6 +126,42 @@ func TestCodeHashIsKeyedAndBound(t *testing.T) {
 	} {
 		if a == b {
 			t.Errorf("hash does not depend on %s", name)
+		}
+	}
+}
+
+func TestDeviceLine(t *testing.T) {
+	for _, tc := range []struct {
+		d    *models.Device
+		want string
+	}{
+		{nil, ""},
+		{&models.Device{}, ""},
+		{&models.Device{Name: " ", Platform: " "}, ""},
+		{&models.Device{Name: "Mac", Platform: "macos"}, "Device: Mac (macos)\n"},
+		{&models.Device{Name: "Mac"}, "Device: Mac\n"},
+		{&models.Device{Platform: "android"}, "Device: android\n"},
+	} {
+		if got := deviceLine(tc.d); got != tc.want {
+			t.Errorf("deviceLine(%+v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestNoticeBodiesHaveNoDoubledBlankLines(t *testing.T) {
+	at := time.Now()
+	for _, e := range []services.Email{
+		noticeSignIn("a", nil, at),
+		noticeSignIn("a", &models.Device{Name: "Mac"}, at),
+		noticePasswordChanged("a", true, at),
+		noticeRecoveryReplaced("a", at),
+		noticeRecoveryUsed("a", nil, at),
+		noticeRecoveryUsed("a", &models.Device{Platform: "ios"}, at),
+		noticeSignedOutAll("a", at),
+		noticeDiaryReset("a", at),
+	} {
+		if strings.Contains(e.Body, "\n\n\n") || strings.Contains(e.Body, "()") {
+			t.Errorf("%q body: %q", e.Subject, e.Body)
 		}
 	}
 }

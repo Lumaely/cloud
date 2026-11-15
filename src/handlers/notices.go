@@ -19,6 +19,8 @@ func (h *Handler) noticeAddress(ctx context.Context, userID string) string {
 		return ""
 	}
 	var email sql.NullString
+	// Runs after the response; the client may already be gone.
+	ctx = context.WithoutCancel(ctx)
 	if err := h.DB.QueryRowContext(ctx, `SELECT email FROM users WHERE user_id = $1`, userID).Scan(&email); err != nil {
 		log.Printf("notice address lookup failed: %v", err)
 		return ""
@@ -31,10 +33,17 @@ func utc(at time.Time) string {
 }
 
 func deviceLine(d *models.Device) string {
-	if d == nil || (d.Name == "" && d.Platform == "") {
+	if d == nil {
 		return ""
 	}
-	return "Device: " + strings.TrimSpace(d.Name+" ("+d.Platform+")") + "\n"
+	name, platform := strings.TrimSpace(d.Name), strings.TrimSpace(d.Platform)
+	switch {
+	case name != "" && platform != "":
+		return "Device: " + name + " (" + platform + ")\n"
+	case name != "" || platform != "":
+		return "Device: " + name + platform + "\n"
+	}
+	return ""
 }
 
 func noticeSignIn(to string, d *models.Device, at time.Time) services.Email {
