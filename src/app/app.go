@@ -10,7 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -85,7 +88,57 @@ func serve(version string) error {
 	if err != nil {
 		return err
 	}
-	return router.Run(":8080")
+	srv := &http.Server{Addr: ":8080", Handler: router}
+	pruneCtx, stopPrune := context.WithCancel(context.Background())
+	pruned := make(chan struct{})
+	go func() {
+		defer close(pruned)
+		handlers.PruneEmailCodesEvery(pruneCtx, db, pruneInterval)
+	}()
+
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	served := make(chan error, 1)
+	go func() { served <- srv.ListenAndServe() }()
+
+	select {
+	case err := <-served:
+		stopPrune()
+		<-pruned
+		return err
+	case <-sigCtx.Done():
+	}
+	log.Println("shutting down")
+	ctx, cancel = context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	stopPrune()
+	err = Shutdown(ctx, srv, h.WaitNotices)
+	<-pruned
+	return err
+}
+
+const (
+	pruneInterval   = time.Hour
+	shutdownTimeout = 15 * time.Second
+)
+
+// Shutdown stops srv, then waits for pending background work until ctx ends.
+func Shutdown(ctx context.Context, srv *http.Server, waitPending func()) error {
+	err := srv.Shutdown(ctx)
+	done := make(chan struct{})
+	go func() {
+		waitPending()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		log.Println("shutdown deadline reached; pending emails dropped")
+		if err == nil {
+			err = ctx.Err()
+		}
+	}
+	return err
 }
 
 // serverSecret falls back to a random value, which changes fake login salts on each restart.

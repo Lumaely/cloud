@@ -153,3 +153,36 @@ func (h *Handler) WaitNotices() {
 func sendCodeFailed(c *gin.Context) {
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to send email"})
 }
+
+// PruneEmailCodes deletes rows whose code expired and whose throttle and cap windows ended.
+// A live window must survive: deleting it would reset the throttle or the cap.
+func PruneEmailCodes(ctx context.Context, db *sql.DB) (int64, error) {
+	res, err := db.ExecContext(ctx, `
+		DELETE FROM email_codes
+		WHERE expires_at <= NOW()
+			AND (sent_at IS NULL OR sent_at < NOW() - make_interval(secs => $1))
+			AND window_start < NOW() - make_interval(secs => $2)
+	`, codeResendWait.Seconds(), codeCapWindow.Seconds())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PruneEmailCodesEvery prunes on each tick until ctx ends.
+func PruneEmailCodesEvery(ctx context.Context, db *sql.DB, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if n, err := PruneEmailCodes(ctx, db); err != nil {
+				log.Printf("email codes prune failed: %v", err)
+			} else if n > 0 {
+				log.Printf("pruned %d stale email codes", n)
+			}
+		}
+	}
+}
