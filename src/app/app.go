@@ -85,6 +85,9 @@ func serve(version string) error {
 	if err != nil {
 		return err
 	}
+	pruneCtx, stopPrune := context.WithCancel(context.Background())
+	defer stopPrune()
+	go handlers.PruneEmailCodesEvery(pruneCtx, db, time.Hour)
 	return router.Run(":8080")
 }
 

@@ -70,6 +70,7 @@ src/scripts/start_dev -d     # background
 - Builds `Dockerfile.dev` and runs `docker compose -f docker-compose-dev.yml up --build` with your options.
 - Starts `db` (Postgres, port 5432), `s3` (MinIO API port 9000, console port 9001) and `app`.
 - `app` waits for healthy `db` and `s3`, applies pending migrations, then serves on http://localhost:8080.
+- Every hour the server deletes `email_codes` rows whose code expired and whose 60 s throttle and 24 h cap windows ended.
 - `app` rebuilds and restarts on every file change (air).
 - Stop it with `docker compose -f docker-compose-dev.yml down`; add `-v` to erase the dev database and files.
 
