@@ -184,10 +184,11 @@ jobs:
       - name: Coverage
         if: ${{ !cancelled() }}
         run: |
+          .github/scripts/coverage_summary --text coverage/*.out
           {
             echo "## Coverage"
             .github/scripts/coverage_summary coverage/*.out
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+          } >> "$GITHUB_STEP_SUMMARY"
           { head -1 "$(find coverage -name '*.out' | head -1)"; tail -q -n +2 coverage/*.out; } > coverage.out
           go tool cover -html=coverage.out -o coverage.html
 
