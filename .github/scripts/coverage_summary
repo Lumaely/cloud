@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Prints a Markdown coverage table per package from one or more Go cover profiles.
+# A block counts as covered when any profile ran it, so overlapping profiles merge.
+set -euo pipefail
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: coverage_summary <profile>..." >&2
+  exit 2
+fi
+
+awk '
+  FNR == 1 && /^mode:/ { next }
+  {
+    block = $1
+    stmts[block] = $2
+    if ($3 > 0) covered[block] = 1
+    file = substr(block, 1, index(block, ":") - 1)
+    sub(/\/[^\/]*$/, "", file)
+    pkg[block] = file
+  }
+  END {
+    for (b in stmts) {
+      total[pkg[b]] += stmts[b]
+      all += stmts[b]
+      if (b in covered) { hit[pkg[b]] += stmts[b]; allHit += stmts[b] }
+    }
+    print "| Package | Coverage | Statements |"
+    print "| --- | ---: | ---: |"
+    n = 0
+    for (p in total) names[++n] = p
+    for (i = 2; i <= n; i++) for (j = i; j > 1 && names[j-1] > names[j]; j--) { t = names[j]; names[j] = names[j-1]; names[j-1] = t }
+    for (i = 1; i <= n; i++) {
+      p = names[i]
+      printf "| `%s` | %.1f%% | %d / %d |\n", p, 100 * hit[p] / total[p], hit[p], total[p]
+    }
+    printf "| **Total** | **%.1f%%** | %d / %d |\n", all ? 100 * allHit / all : 0, allHit, all
+  }
+' "$@"
