@@ -169,7 +169,7 @@ func TestIntegrationRecordsAreIsolated(t *testing.T) {
 	}
 }
 
-func TestIntegrationChangeFeed(t *testing.T) {
+func TestIntegrationRecordChangeFeed(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("feed@test.local")
 	day, pattern, folder := dayID(t), uuidV7(t), uuidV7(t)
@@ -239,7 +239,7 @@ func TestIntegrationChangeFeed(t *testing.T) {
 	expect(t, w, http.StatusBadRequest)
 }
 
-func TestIntegrationConcurrentCreatesOfOneDay(t *testing.T) {
+func TestIntegrationRecordConcurrentCreatesOfOneDay(t *testing.T) {
 	s := newStack(t, 0)
 	phone := s.register("race@test.local")
 	tablet := s.loginOn(phone, "Tablet", "android")

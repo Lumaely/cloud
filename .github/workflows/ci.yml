@@ -1,0 +1,201 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch cancels the run still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and run
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build Go binary
+        run: go build -o main ./src
+
+      - name: Build Docker image
+        run: src/scripts/build_prod ci
+
+      - name: Write CI .env
+        run: |
+          cat > .env <<'EOF'
+          DB_USER=ci
+          DB_PASSWORD=ci
+          DB_NAME=lumaely
+          MINIO_ROOT_USER=minioadmin
+          MINIO_ROOT_PASSWORD=minioadmin
+          SERVER_MODE=cloud
+          SERVER_SECRET=ci-secret
+          MAIL_DRIVER=log
+          EOF
+
+      - name: Start stack and wait for /health
+        run: src/scripts/start_prod ci
+
+      - name: Stop stack
+        if: always()
+        run: docker compose -f docker-compose.yml down -v
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l src)
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            echo "::error::Files not gofmt-ed. Run 'gofmt -w src' and commit the result."
+            exit 1
+          fi
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Shellcheck
+        run: shellcheck src/scripts/* .github/scripts/*
+
+      # Keep in sync with the integration steps of `tests`: a test outside every sector never runs.
+      - name: Every integration test belongs to a sector
+        run: |
+          orphans=$(go test -list '.*' ./src/test | grep '^Test' \
+            | grep -vE '^Test(Integration(Account|Device|Notice|Record|Attachment|Platform)|ApplyMigrationScript)' || true)
+          if [ -n "$orphans" ]; then
+            echo "$orphans"
+            echo "::error::Integration tests without a sector prefix."
+            exit 1
+          fi
+
+  tests:
+    name: Tests and coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: lumaely_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d lumaely_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://test:test@localhost:5432/lumaely_test?sslmode=disable
+      MINIO_TEST_ENDPOINT: localhost:9000
+      MINIO_TEST_ACCESS_KEY: minioadmin
+      MINIO_TEST_SECRET_KEY: minioadmin
+      # Every step measures all of src/, so integration tests count toward the code they reach.
+      GO_TEST: go tool gotestsum --format testname -- -race -count=1 -covermode=atomic -coverpkg=./src/...
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Service containers cannot pass `server /data`, so MinIO is started by hand.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER="$MINIO_TEST_ACCESS_KEY" \
+            -e MINIO_ROOT_PASSWORD="$MINIO_TEST_SECRET_KEY" \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data
+          for _ in $(seq 1 30); do
+            curl -fs http://localhost:9000/minio/health/live && exit 0
+            sleep 1
+          done
+          docker logs minio
+          exit 1
+
+      - name: Build test tools
+        run: |
+          go tool gotestsum --version
+          mkdir coverage
+
+      # `!cancelled()` keeps every sector running after one fails, so the run shows them all.
+      - name: Unit · App
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -coverprofile=coverage/unit-app.out ./src/app
+
+      - name: Unit · Handlers
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -coverprofile=coverage/unit-handlers.out ./src/handlers
+
+      - name: Unit · Middleware
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -coverprofile=coverage/unit-middleware.out ./src/middleware
+
+      - name: Unit · Services
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -coverprofile=coverage/unit-services.out ./src/services
+
+      - name: Integration · Accounts
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -run '^TestIntegrationAccount' -coverprofile=coverage/integration-accounts.out ./src/test
+
+      - name: Integration · Devices
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -run '^TestIntegrationDevice' -coverprofile=coverage/integration-devices.out ./src/test
+
+      - name: Integration · Notices
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -run '^TestIntegrationNotice' -coverprofile=coverage/integration-notices.out ./src/test
+
+      - name: Integration · Records
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -run '^TestIntegrationRecord' -coverprofile=coverage/integration-records.out ./src/test
+
+      - name: Integration · Attachments
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -run '^TestIntegrationAttachment' -coverprofile=coverage/integration-attachments.out ./src/test
+
+      - name: Integration · Platform
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -run '^TestIntegrationPlatform' -coverprofile=coverage/integration-platform.out ./src/test
+
+      - name: Integration · Migration scripts
+        if: ${{ !cancelled() }}
+        run: $GO_TEST -run '^TestApplyMigrationScript' -coverprofile=coverage/integration-migrations.out ./src/test
+
+      - name: Coverage
+        if: ${{ !cancelled() }}
+        run: |
+          .github/scripts/coverage_summary --text coverage/*.out
+          {
+            echo "## Coverage"
+            .github/scripts/coverage_summary coverage/*.out
+          } >> "$GITHUB_STEP_SUMMARY"
+          { head -1 "$(find coverage -name '*.out' | head -1)"; tail -q -n +2 coverage/*.out; } > coverage.out
+          go tool cover -html=coverage.out -o coverage.html
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.html

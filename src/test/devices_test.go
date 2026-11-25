@@ -162,7 +162,7 @@ func TestIntegrationDeviceFieldsLimitedTo64Characters(t *testing.T) {
 	expect(t, s.do(http.MethodPost, "/users/register", "", reg), http.StatusBadRequest)
 }
 
-func TestIntegrationLastSeenRefreshedAtMostEveryFiveMinutes(t *testing.T) {
+func TestIntegrationDeviceLastSeenRefreshedAtMostEveryFiveMinutes(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("seen@test.local")
 	id := s.sessions(a.token)[0].SessionID
@@ -181,7 +181,7 @@ func TestIntegrationLastSeenRefreshedAtMostEveryFiveMinutes(t *testing.T) {
 	}
 }
 
-func TestIntegrationSignOutOneDevice(t *testing.T) {
+func TestIntegrationDeviceSignOutOne(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("one@test.local")
 	phone := s.loginOn(a, "Phone", "ios")
@@ -213,7 +213,7 @@ func TestIntegrationSignOutOneDevice(t *testing.T) {
 	expect(t, s.do(http.MethodGet, "/users/me", a.token, nil), http.StatusUnauthorized)
 }
 
-func TestIntegrationURNSessionIDAccepted(t *testing.T) {
+func TestIntegrationDeviceURNSessionIDAccepted(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("urn@test.local")
 	other := s.loginOn(a, "Other", "ios")
@@ -228,7 +228,7 @@ func TestIntegrationURNSessionIDAccepted(t *testing.T) {
 	expect(t, s.do(http.MethodGet, "/users/me", other, nil), http.StatusUnauthorized)
 }
 
-func TestIntegrationSignInPrunesExpiredAndStalestSessions(t *testing.T) {
+func TestIntegrationDeviceSignInPrunesExpiredAndStalestSessions(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("cap@test.local")
 	_, err := s.db.Exec(`
@@ -262,7 +262,7 @@ func TestIntegrationSignInPrunesExpiredAndStalestSessions(t *testing.T) {
 	expect(t, s.do(http.MethodGet, "/users/me", a.token, nil), http.StatusOK)
 }
 
-func TestIntegrationSignInNeverPrunesItsOwnSession(t *testing.T) {
+func TestIntegrationDeviceSignInNeverPrunesItsOwnSession(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("self@test.local")
 	_, err := s.db.Exec(`

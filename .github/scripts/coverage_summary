@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Prints a coverage table per package from one or more Go cover profiles, as Markdown or aligned text.
+# A block counts as covered when any profile ran it, so overlapping profiles merge.
+set -euo pipefail
+
+format=markdown
+if [ "${1:-}" = "--text" ]; then
+  format=text
+  shift
+fi
+if [ "$#" -eq 0 ]; then
+  echo "usage: coverage_summary [--text] <profile>..." >&2
+  exit 2
+fi
+
+awk -v format="$format" '
+  FNR == 1 && /^mode:/ { next }
+  {
+    block = $1
+    stmts[block] = $2
+    if ($3 > 0) covered[block] = 1
+    file = substr(block, 1, index(block, ":") - 1)
+    sub(/\/[^\/]*$/, "", file)
+    pkg[block] = file
+  }
+  function row(name, hit, total) {
+    pct = total ? 100 * hit / total : 0
+    if (format == "text") printf "%-" width "s  %6.1f%%  %5d / %d\n", name, pct, hit, total
+    else if (name == "Total") printf "| **Total** | **%.1f%%** | %d / %d |\n", pct, hit, total
+    else printf "| `%s` | %.1f%% | %d / %d |\n", name, pct, hit, total
+  }
+  END {
+    for (b in stmts) {
+      total[pkg[b]] += stmts[b]
+      all += stmts[b]
+      if (b in covered) { hit[pkg[b]] += stmts[b]; allHit += stmts[b] }
+    }
+    n = 0
+    width = length("Package")
+    for (p in total) { names[++n] = p; if (length(p) > width) width = length(p) }
+    for (i = 2; i <= n; i++) for (j = i; j > 1 && names[j-1] > names[j]; j--) { t = names[j]; names[j] = names[j-1]; names[j-1] = t }
+
+    if (format == "text") {
+      printf "%-" width "s  %7s  %s\n", "Package", "Cover", "Statements"
+    } else {
+      print "| Package | Coverage | Statements |"
+      print "| --- | ---: | ---: |"
+    }
+    for (i = 1; i <= n; i++) row(names[i], hit[names[i]], total[names[i]])
+    row("Total", allHit, all)
+  }
+' "$@"
