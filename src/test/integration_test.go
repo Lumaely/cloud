@@ -259,7 +259,7 @@ func decode[T any](t *testing.T, w *httptest.ResponseRecorder) T {
 	return v
 }
 
-func TestIntegrationRegisterAndLogin(t *testing.T) {
+func TestIntegrationAccountRegisterAndLogin(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("Alice@Test.local")
 
@@ -303,7 +303,7 @@ func TestIntegrationRegisterAndLogin(t *testing.T) {
 	expect(t, s.do(http.MethodPost, "/users/register", "", bad), http.StatusBadRequest)
 }
 
-func TestIntegrationRecovery(t *testing.T) {
+func TestIntegrationAccountRecovery(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("rec@test.local")
 	start := func(key []byte) *httptest.ResponseRecorder {
@@ -337,7 +337,7 @@ func TestIntegrationRecovery(t *testing.T) {
 	expect(t, s.login(a.email, newKey), http.StatusOK)
 }
 
-func TestIntegrationChangePassword(t *testing.T) {
+func TestIntegrationAccountChangePassword(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("pw@test.local")
 	other := decode[models.AuthResponse](t, s.login(a.email, a.authKey)).Token
@@ -364,7 +364,7 @@ func TestIntegrationChangePassword(t *testing.T) {
 	expect(t, s.do(http.MethodPost, "/users/recover/start", "", map[string]any{"email": a.email, "recovery_auth_key": newRecovery}), http.StatusOK)
 }
 
-func TestIntegrationSignOutAllDevices(t *testing.T) {
+func TestIntegrationAccountSignOutAllDevices(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("out@test.local")
 	other := decode[models.AuthResponse](t, s.login(a.email, a.authKey)).Token
@@ -375,7 +375,7 @@ func TestIntegrationSignOutAllDevices(t *testing.T) {
 	expect(t, s.do(http.MethodGet, "/users/me", other, nil), http.StatusUnauthorized)
 }
 
-func TestIntegrationExpiredSessionRejected(t *testing.T) {
+func TestIntegrationAccountExpiredSessionRejected(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("old@test.local")
 	if _, err := s.db.Exec("UPDATE user_sessions SET expires_at = NOW() - INTERVAL '1 minute'"); err != nil {
@@ -384,7 +384,7 @@ func TestIntegrationExpiredSessionRejected(t *testing.T) {
 	expect(t, s.do(http.MethodGet, "/users/me", a.token, nil), http.StatusUnauthorized)
 }
 
-func TestIntegrationResetDiary(t *testing.T) {
+func TestIntegrationAccountResetDiary(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("reset@test.local")
 	s.create(a.token, "entries", dayID(t), "day")
@@ -406,7 +406,7 @@ func TestIntegrationResetDiary(t *testing.T) {
 	expect(t, s.login(a.email, a.authKey), http.StatusOK)
 }
 
-func TestIntegrationEraseAndStartOver(t *testing.T) {
+func TestIntegrationAccountEraseAndStartOver(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("erase@test.local")
 	s.create(a.token, "entries", dayID(t), "day")
@@ -446,7 +446,7 @@ func TestIntegrationEraseAndStartOver(t *testing.T) {
 	expect(t, s.do(http.MethodPost, "/users/erase/confirm", "", confirm), http.StatusUnauthorized)
 }
 
-func TestIntegrationEraseCodeBurnsAfterFiveFailures(t *testing.T) {
+func TestIntegrationAccountEraseCodeBurnsAfterFiveFailures(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("burn@test.local")
 	s.requestErase(a.email)
@@ -461,7 +461,7 @@ func TestIntegrationEraseCodeBurnsAfterFiveFailures(t *testing.T) {
 	expect(t, s.do(http.MethodPost, "/users/erase/confirm", "", confirm), http.StatusUnauthorized)
 }
 
-func TestIntegrationEraseRequestThrottle(t *testing.T) {
+func TestIntegrationAccountEraseRequestThrottle(t *testing.T) {
 	s := newStack(t, 0)
 	s.register("throttle@test.local")
 	s.requestErase("THROTTLE@test.local")
@@ -480,7 +480,7 @@ func TestIntegrationEraseRequestThrottle(t *testing.T) {
 	}
 }
 
-func TestIntegrationBurnedCodeKeepsThrottle(t *testing.T) {
+func TestIntegrationAccountBurnedCodeKeepsThrottle(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("burnwait@test.local")
 	request := func() { s.requestErase(a.email) }
@@ -507,7 +507,7 @@ func TestIntegrationBurnedCodeKeepsThrottle(t *testing.T) {
 	expect(t, s.do(http.MethodPost, "/users/erase/confirm", "", confirm), http.StatusOK)
 }
 
-func TestIntegrationCodeDailyCap(t *testing.T) {
+func TestIntegrationAccountCodeDailyCap(t *testing.T) {
 	s := newStack(t, 0)
 	request := func() {
 		expect(t, s.do(http.MethodPost, "/users/register/start", "", map[string]string{"email": "cap@test.local"}), http.StatusAccepted)
@@ -538,7 +538,7 @@ func TestIntegrationCodeDailyCap(t *testing.T) {
 	emails(3)
 }
 
-func TestIntegrationCapIgnoresFailedSends(t *testing.T) {
+func TestIntegrationAccountCapIgnoresFailedSends(t *testing.T) {
 	s := newStack(t, 0)
 	request := func() *httptest.ResponseRecorder {
 		return s.do(http.MethodPost, "/users/register/start", "", map[string]string{"email": "fail@test.local"})
@@ -562,7 +562,7 @@ func TestIntegrationCapIgnoresFailedSends(t *testing.T) {
 	}
 }
 
-func TestIntegrationEraseRequestThrottleConcurrent(t *testing.T) {
+func TestIntegrationAccountEraseRequestThrottleConcurrent(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("race@test.local")
 
@@ -579,7 +579,7 @@ func TestIntegrationEraseRequestThrottleConcurrent(t *testing.T) {
 	}
 }
 
-func TestIntegrationEraseRequestHidesAccount(t *testing.T) {
+func TestIntegrationAccountEraseRequestHidesAccount(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("known@test.local")
 	s.mailer.setFail(true)
@@ -597,7 +597,7 @@ func TestIntegrationEraseRequestHidesAccount(t *testing.T) {
 	}
 }
 
-func TestIntegrationEraseRequestSendFailure(t *testing.T) {
+func TestIntegrationAccountEraseRequestSendFailure(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("fail@test.local")
 
@@ -620,7 +620,7 @@ func (s *stack) requestErase(email string) {
 	s.h.WaitNotices()
 }
 
-func TestIntegrationDeleteUserRemovesObjects(t *testing.T) {
+func TestIntegrationAccountDeleteUserRemovesObjects(t *testing.T) {
 	s := newStack(t, 0)
 	gone, keeper := s.register("gone@test.local"), s.register("keeper@test.local")
 	expect(t, s.upload(gone.token, "/attachments/"+uuidV7(t), "a"), http.StatusCreated)
@@ -641,7 +641,7 @@ func TestIntegrationDeleteUserRemovesObjects(t *testing.T) {
 	expect(t, s.login(gone.email, gone.authKey), http.StatusUnauthorized)
 }
 
-func TestIntegrationFeedback(t *testing.T) {
+func TestIntegrationPlatformFeedback(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("fb@test.local")
 
@@ -658,7 +658,7 @@ func TestIntegrationFeedback(t *testing.T) {
 	}
 }
 
-func TestIntegrationHealth(t *testing.T) {
+func TestIntegrationPlatformHealth(t *testing.T) {
 	s := newStack(t, 0)
 	got := decode[map[string]string](t, s.do(http.MethodGet, "/health", "", nil))
 	if got["version"] != "test" || got["mode"] != handlers.ModeCloud {
@@ -666,7 +666,7 @@ func TestIntegrationHealth(t *testing.T) {
 	}
 }
 
-func TestIntegrationRegisterStart(t *testing.T) {
+func TestIntegrationAccountRegisterStart(t *testing.T) {
 	s := newStack(t, 0)
 	start := func(email string) *httptest.ResponseRecorder {
 		return s.do(http.MethodPost, "/users/register/start", "", map[string]string{"email": email})
@@ -697,7 +697,7 @@ func TestIntegrationRegisterStart(t *testing.T) {
 	expect(t, start("down@test.local"), http.StatusServiceUnavailable)
 }
 
-func TestIntegrationRegisterCode(t *testing.T) {
+func TestIntegrationAccountRegisterCode(t *testing.T) {
 	s := newStack(t, 0)
 	fields := func(email string, code any) map[string]any {
 		f := s.keyFields(&account{email: email, authKey: randomBytes(t, 32), recoveryKey: randomBytes(t, 32)})
@@ -726,7 +726,7 @@ func TestIntegrationRegisterCode(t *testing.T) {
 	expect(t, register(good), http.StatusUnauthorized)
 }
 
-func TestIntegrationRegisterCodeBurnsAfterFiveFailures(t *testing.T) {
+func TestIntegrationAccountRegisterCodeBurnsAfterFiveFailures(t *testing.T) {
 	s := newStack(t, 0)
 	expect(t, s.do(http.MethodPost, "/users/register/start", "", map[string]string{"email": "burn@test.local"}), http.StatusAccepted)
 	f := s.keyFields(&account{email: "burn@test.local", authKey: randomBytes(t, 32), recoveryKey: randomBytes(t, 32)})
@@ -740,7 +740,7 @@ func TestIntegrationRegisterCodeBurnsAfterFiveFailures(t *testing.T) {
 	expect(t, s.do(http.MethodPost, "/users/register", "", f), http.StatusUnauthorized)
 }
 
-func TestIntegrationSelfHostedRegisterNeedsNoCode(t *testing.T) {
+func TestIntegrationAccountSelfHostedRegisterNeedsNoCode(t *testing.T) {
 	s := newStackMode(t, 0, handlers.ModeSelfHosted)
 	s.register("solo@test.local")
 	expect(t, s.do(http.MethodPost, "/users/register/start", "", map[string]string{"email": "solo@test.local"}), http.StatusNotFound)

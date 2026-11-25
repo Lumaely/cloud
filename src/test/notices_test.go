@@ -40,7 +40,7 @@ func (s *stack) passwordBody(a *account, extra map[string]any) map[string]any {
 	return body
 }
 
-func TestIntegrationSignInNotice(t *testing.T) {
+func TestIntegrationNoticeSignIn(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("alice@test.local")
 	expect(t, s.do(http.MethodPost, "/users/login", "", map[string]any{
@@ -60,7 +60,7 @@ func TestIntegrationSignInNotice(t *testing.T) {
 	s.onlyNotice("New sign-in to your Lumaely account")
 }
 
-func TestIntegrationPasswordChangeNotices(t *testing.T) {
+func TestIntegrationNoticePasswordChange(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("alice@test.local")
 
@@ -86,7 +86,7 @@ func TestIntegrationPasswordChangeNotices(t *testing.T) {
 	s.noNotice()
 }
 
-func TestIntegrationRecoveryUsedNotice(t *testing.T) {
+func TestIntegrationNoticeRecoveryUsed(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("alice@test.local")
 	w := s.do(http.MethodPost, "/users/recover/start", "", map[string]any{"email": a.email, "recovery_auth_key": a.recoveryKey})
@@ -103,7 +103,7 @@ func TestIntegrationRecoveryUsedNotice(t *testing.T) {
 	}
 }
 
-func TestIntegrationSignOutAllAndDiaryResetNotices(t *testing.T) {
+func TestIntegrationNoticeSignOutAllAndDiaryReset(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("alice@test.local")
 	expect(t, s.do(http.MethodDelete, "/users/me/diary", a.token, nil), http.StatusNoContent)
@@ -112,7 +112,7 @@ func TestIntegrationSignOutAllAndDiaryResetNotices(t *testing.T) {
 	s.onlyNotice("All your Lumaely devices were signed out")
 }
 
-func TestIntegrationNoNoticeForSingleSessionOrErase(t *testing.T) {
+func TestIntegrationNoticeSkippedForSingleSessionOrErase(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("alice@test.local")
 	var id string
@@ -129,7 +129,7 @@ func TestIntegrationNoNoticeForSingleSessionOrErase(t *testing.T) {
 	s.noNotice()
 }
 
-func TestIntegrationNoticesFailSoftAndSelfHosted(t *testing.T) {
+func TestIntegrationNoticeFailSoftAndSelfHosted(t *testing.T) {
 	s := newStack(t, 0)
 	a := s.register("alice@test.local")
 	s.mailer.setFail(true)

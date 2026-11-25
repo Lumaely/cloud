@@ -7,7 +7,7 @@ import (
 	"cloud/src/handlers"
 )
 
-func TestIntegrationPruneEmailCodes(t *testing.T) {
+func TestIntegrationAccountPruneEmailCodes(t *testing.T) {
 	s := newStack(t, 0)
 	rows := map[string]string{
 		"stale":      `NOW() - INTERVAL '1 hour', NOW() - INTERVAL '25 hours', NOW() - INTERVAL '25 hours', 3`,
